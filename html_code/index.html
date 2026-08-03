@@ -163,6 +163,34 @@
     .fileItem.active { background: #5a7fb0; color: #fff; }
     .fileIcon { font-size: 15px; flex-shrink: 0; }
 
+    /* Tab bar */
+    #tabs {
+      display: flex;
+      gap: 4px;
+      padding: 6px 12px 0;
+      background: #2f2f2f;
+      border-bottom: 1px solid #444;
+      flex-shrink: 0;
+    }
+    #tabs .tab {
+      background: #3f3f3f;
+      color: #ccc;
+      border: 1px solid #444;
+      border-bottom: none;
+      border-radius: 6px 6px 0 0;
+      padding: 7px 18px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    #tabs .tab:hover { background: #4a4a4a; color: #fff; }
+    #tabs .tab.active {
+      background: #fafafa;
+      color: #222;
+      border-color: #fafafa;
+    }
+    #tabs .tab:disabled { opacity: .4; cursor: default; }
+
     #viewer {
       flex: 1;
       margin: 0 auto;
@@ -172,6 +200,64 @@
       box-shadow: 0 0 30px rgba(0,0,0,.5);
       overflow: hidden;
       touch-action: none; /* niente panning nativo: i gesti li gestisce epub.js */
+    }
+
+    /* Editor HTML */
+    #editorPanel {
+      display: none;
+      flex: 1;
+      flex-direction: column;
+      min-height: 0;
+      background: #1e1e1e;
+      border-top: 1px solid #444;
+    }
+    #editorHeader {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: #2c2c2c;
+      border-bottom: 1px solid #444;
+      flex-shrink: 0;
+    }
+    #editorHeader span {
+      flex: 1;
+      font-family: Consolas, monospace;
+      font-size: 12px;
+      color: #aaa;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    #editorHeader button {
+      background: #555;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 5px 12px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    #editorHeader button:hover { background: #666; }
+    #editorHeader button:disabled { opacity: .4; cursor: default; }
+    #editorHeader #saveBtn { background: #3d7a3d; }
+    #editorHeader #saveBtn:hover { background: #4a8f4a; }
+    #editorHeader #saveBtn:disabled { background: #555; }
+    #codeEditor {
+      flex: 1;
+      min-height: 0;
+      border: none;
+      outline: none;
+      resize: none;
+      padding: 12px;
+      background: #1e1e1e;
+      color: #dcdcdc;
+      font-family: Consolas, 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      tab-size: 2;
+      white-space: pre;
+      overflow: auto;
     }
 
     .epub-container { touch-action: none; }
@@ -211,7 +297,24 @@
     <span id="chapter"></span>
   </div>
 
+  <!-- Tab: lettura / modifica HTML -->
+  <div id="tabs">
+    <button id="tabView" class="tab active">📖 Lettura</button>
+    <button id="tabEdit" class="tab" disabled>✏️ Modifica HTML</button>
+  </div>
+
   <div id="viewer"></div>
+
+  <!-- Pannello editor HTML del capitolo corrente -->
+  <div id="editorPanel">
+    <div id="editorHeader">
+      <span id="editorFile"></span>
+      <button id="reloadEditor" title="Ricarica dal file">↻</button>
+      <button id="saveBtn" title="Salva nel file .epub">💾 Salva</button>
+    </div>
+    <textarea id="codeEditor" spellcheck="false" wrap="off"
+      placeholder="Apri un capitolo e seleziona la tab 'Modifica HTML' per vederne il codice."></textarea>
+  </div>
 
   <!-- Sidebar sinistra: libreria (scelta del libro) -->
   <aside id="librarySidebar" aria-hidden="true">
@@ -237,6 +340,7 @@
     var spreadOn = true; // doppia pagina affiancata (default)
     var fileEls = {};    // href -> elemento riga nella sidebar
     var currentBookUrl = null;
+    var currentHref = null;   // href del capitolo visualizzato (per l'editor)
     var viewer = document.getElementById("viewer");
     var statusEl = document.getElementById("status");
     var bookListEl = document.getElementById("bookList");
@@ -275,6 +379,8 @@
 
     // listBooks() → elenco .epub (sostituisce GET /api/books di Flask)
     api.listBooks = createBridgeFn("epub", "listBooks");
+    // saveChapter() → salva il codice HTML modificato dentro l'epub
+    api.saveChapter = createBridgeFn("epub", "saveChapter");
 
     function setStatus(msg) {
       statusEl.textContent = msg;
@@ -362,7 +468,8 @@
     // --- Lettura ---
     function openBook(url) {
       if (book) book.destroy();
-      currentBookUrl = url;
+      currentBookUrl = url.split("?")[0]; // toglie l'eventuale cache-buster
+      currentHref = null;
       setStatus("Apertura del libro…");
 
       book = ePub(url);
@@ -378,6 +485,7 @@
         document.getElementById("next").disabled = false;
         document.getElementById("spreadToggle").disabled = false;
         document.getElementById("filesToggle").disabled = false;
+        document.getElementById("tabEdit").disabled = false;
         var title = book.packaging.metadata.title;
         if (title) document.getElementById("title").textContent = title;
         try {
@@ -396,6 +504,11 @@
           if (nav) label = nav.label;
         }
         document.getElementById("chapter").textContent = label;
+
+        // Aggiorna il capitolo corrente (usato dall'editor HTML)
+        currentHref = location.start && location.start.href ? location.start.href : null;
+        var editorPanel = document.getElementById("editorPanel");
+        if (editorPanel.style.display !== "none") loadEditorContent();
 
         // Evidenzia il file attivo nella sidebar (browser del pacchetto)
         for (var h in fileEls) fileEls[h].classList.remove("active");
@@ -532,6 +645,12 @@
 
     // Tastiera: frecce per navigare, Esc per chiudere le sidebar
     document.addEventListener("keydown", function (e) {
+      // Dentro l'editor HTML le frecce muovono il cursore, non sfogliano
+      var isEditor = e.target && e.target.id === "codeEditor";
+      if (isEditor) {
+        if (e.key === "Escape") showTab("view");
+        return;
+      }
       if (e.key === "ArrowRight") rendition && rendition.next();
       if (e.key === "ArrowLeft") rendition && rendition.prev();
       if (e.key === "Escape") {
@@ -539,6 +658,93 @@
         document.getElementById("sidebar").classList.remove("open");
         document.getElementById("filesToggle").classList.remove("active");
       }
+    });
+
+    // --- Tab: lettura / modifica HTML ---
+    function showTab(which) {
+      var viewTab = document.getElementById("tabView");
+      var editTab = document.getElementById("tabEdit");
+      var editorPanel = document.getElementById("editorPanel");
+      if (which === "edit") {
+        viewTab.classList.remove("active");
+        editTab.classList.add("active");
+        viewer.style.display = "none";
+        editorPanel.style.display = "flex";
+        loadEditorContent();
+      } else {
+        editTab.classList.remove("active");
+        viewTab.classList.add("active");
+        editorPanel.style.display = "none";
+        viewer.style.display = "block";
+        if (rendition) rendition.resize(); // ricalcola il layout paginato
+      }
+    }
+
+    function loadEditorContent() {
+      var fileLabel = document.getElementById("editorFile");
+      var ta = document.getElementById("codeEditor");
+      if (!book || !book.archive) {
+        ta.value = "";
+        fileLabel.textContent = "Nessun libro aperto.";
+        return;
+      }
+      if (!currentHref) {
+        ta.value = "";
+        fileLabel.textContent = "Nessun capitolo selezionato: apri un capitolo nella tab Lettura.";
+        return;
+      }
+      // Il percorso da usare con l'archive è quello assoluto dentro l'epub,
+      // ricavato dalla sezione dello spine (l'href può essere relativo al package).
+      var section = book.spine ? book.spine.get(currentHref) : null;
+      var src = section && section.url ? section.url : currentHref;
+      fileLabel.textContent = "Modifica: " + src;
+      ta.value = "Caricamento…";
+      book.archive.request(src, "text").then(function (text) {
+        ta.value = text;
+      }).catch(function (err) {
+        ta.value = "";
+        fileLabel.textContent = "Errore nel caricamento del file.";
+      });
+    }
+
+    document.getElementById("tabView").addEventListener("click", function () {
+      showTab("view");
+    });
+    document.getElementById("tabEdit").addEventListener("click", function () {
+      showTab("edit");
+    });
+    document.getElementById("reloadEditor").addEventListener("click", loadEditorContent);
+
+    // Salva il codice HTML modificato dentro il file .epub e ricarica
+    document.getElementById("saveBtn").addEventListener("click", function () {
+      if (!book || !currentHref) return;
+      var btn = document.getElementById("saveBtn");
+      var content = document.getElementById("codeEditor").value;
+      // Percorso assoluto dentro l'epub (quello che matcha le voci dello zip)
+      var section = book.spine ? book.spine.get(currentHref) : null;
+      var archPath = section && section.url
+        ? section.url.replace(/^\//, "")
+        : currentHref.replace(/^\//, "");
+      btn.disabled = true;
+      api.saveChapter({
+        book: currentBookUrl.replace(/^\//, ""),
+        href: archPath,
+        content: content
+      }).then(function (res) {
+        btn.disabled = false;
+        if (res && res.ok) {
+          setStatus("Modifiche salvate nel file .epub ✓");
+          var busted = currentBookUrl +
+            (currentBookUrl.indexOf("?") >= 0 ? "&" : "?") + "_=" + Date.now();
+          openBook(busted); // ricarica il libro per applicare le modifiche
+          showTab("view");
+        } else {
+          setStatus("Errore nel salvataggio: " + ((res && res.error) || "sconosciuto"));
+        }
+      }).catch(function (err) {
+        btn.disabled = false;
+        setStatus("Errore del bridge: " + err);
+      });
     });
 
     // All'avvio carica l'elenco dei libri dal backend Nim

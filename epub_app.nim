@@ -14,7 +14,7 @@
 import
   miowv,
   winim,
-  std/[json, os, strutils, xmlparser, xmltree, algorithm],
+  std/[json, os, strutils, xmlparser, xmltree, algorithm, tables],
   zippy/ziparchives
 
 # ------------------------------------------------------------------
@@ -104,11 +104,56 @@ proc listEpubBooks*(dir: string): seq[JsonNode] =
   )
 
 # ------------------------------------------------------------------
-# Bridge JS <-> Nim
+# Salvataggio di un file modificato dentro l'epub
 # ------------------------------------------------------------------
 var
   gBooksDir: string   # cartella con i file .epub
 
+proc saveChapterIntoEpub(bookPath, href, content: string): string =
+  ## Riscrive il file .epub su disco sostituendo il contenuto della voce
+  ## `href` con `content`. Restituisce "" in caso di successo, altrimenti
+  ## un messaggio d'errore.
+  let full = gBooksDir / bookPath
+  if not fileExists(full):
+    return "File non trovato: " & bookPath
+
+  var entries = initOrderedTable[string, string]()
+  var reader: ZipArchiveReader
+  try:
+    reader = openZipArchive(full)
+  except CatchableError as e:
+    return "Impossibile aprire l'epub: " & e.msg
+
+  try:
+    var found = false
+    for name in reader.walkFiles():
+      if cmpIgnoreCase(name, href) == 0:
+        entries[name] = content
+        found = true
+      else:
+        entries[name] = reader.extractFile(name)
+    if not found:
+      return "Il file " & href & " non e' presente nell'epub"
+  except CatchableError as e:
+    return "Errore durante la lettura dell'epub: " & e.msg
+  finally:
+    try:
+      reader.close()
+    except CatchableError:
+      discard
+
+  try:
+    let newZip = createZipArchive(entries)   # ricompone l'epub in memoria
+    let tmp = full & ".tmp"
+    writeFile(tmp, newZip)
+    moveFile(tmp, full)                       # sostituzione atomica su disco
+  except CatchableError as e:
+    return "Errore durante la scrittura: " & e.msg
+  return ""
+
+# ------------------------------------------------------------------
+# Bridge JS <-> Nim
+# ------------------------------------------------------------------
 proc handleBridge(w: Webview; arg: cstring) =
   ## Callback invocato dal JavaScript via window.chrome.webview.postMessage.
   try:
@@ -119,10 +164,23 @@ proc handleBridge(w: Webview; arg: cstring) =
 
     if scope != "epub" or cbId.len == 0: return
 
+    # Parsing degli argomenti opzionali (inviati come stringa JSON in "args")
+    var args = newJNull()
+    if msg.hasKey("args") and msg["args"].getStr().len > 0:
+      args = parseJson(msg["args"].getStr())
+
     case name
     of "listBooks":
       let data = %(listEpubBooks(gBooksDir))
       let js = "window._nimCallbacks[" & cbId & "](" & $data & ")"
+      w.eval(js)
+    of "saveChapter":
+      let bookPath = args["book"].getStr()
+      let href     = args["href"].getStr()
+      let content  = args["content"].getStr()
+      let err = saveChapterIntoEpub(bookPath, href, content)
+      let res = %*{"ok": err.len == 0, "error": err}
+      let js = "window._nimCallbacks[" & cbId & "](" & $res & ")"
       w.eval(js)
     else:
       echo "[epub] Comando sconosciuto: ", scope, "/", name
