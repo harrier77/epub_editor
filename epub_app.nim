@@ -152,6 +152,55 @@ proc saveChapterIntoEpub(bookPath, href, content: string): string =
   return ""
 
 # ------------------------------------------------------------------
+# Aggiornamento del DOM senza ricaricare l'epub
+# ------------------------------------------------------------------
+# Dopo un salvataggio riuscito NON serve ricaricare il file .epub: questo
+# snippet JS ri-renderizza il capitolo corrente nel viewer usando il contenuto
+# appena salvato (ancora nel textarea dell'editor), patchando l'archive di
+# epub.js in memoria e invalidando le cache di sezione/view.
+const updateChapterDomJs = """
+(function () {
+  if (!window.book || !window.book.archive || !window.rendition) return;
+  var section = window.book.spine ? window.book.spine.get(window.currentHref) : null;
+  if (!section) return;
+  var archPath = (section.url || window.currentHref).replace(/^\//, '');
+  var newText = document.getElementById('codeEditor').value;
+  var archive = window.book.archive;
+  var origRequest = archive.request.bind(archive);
+  // 1) Patch dell'archive in memoria: la richiesta del capitolo salvato
+  //    restituisce il nuovo contenuto invece di rileggerlo dall'epub.
+  archive.request = function (url, type) {
+    var p = window.decodeURIComponent(String(url).substr(1));
+    if (p === archPath) {
+      if (!type) {
+        var m = /\.([a-z0-9]+)$/i.exec(String(url));
+        type = m ? m[1].toLowerCase() : '';
+      }
+      try {
+        return Promise.resolve(archive.handleResponse(newText, type));
+      } catch (e) {
+        return Promise.resolve(newText);
+      }
+    }
+    return origRequest(url, type);
+  };
+  // 2) Invalida le cache della sezione e dei view, cosi' il re-render
+  //    rilegge il contenuto aggiornato.
+  section.contents = undefined;
+  section.document = undefined;
+  section.output = undefined;
+  var views = window.rendition.manager.views.all();
+  for (var i = 0; i < views.length; i++) {
+    if (views[i].section && views[i].section.index === section.index) {
+      views[i].displayed = false;
+    }
+  }
+  // 3) Ri-renderizza il capitolo corrente nel viewer.
+  window.rendition.display(window.currentHref);
+})();
+"""
+
+# ------------------------------------------------------------------
 # Bridge JS <-> Nim
 # ------------------------------------------------------------------
 proc handleBridge(w: Webview; arg: cstring) =
@@ -179,6 +228,11 @@ proc handleBridge(w: Webview; arg: cstring) =
       let href     = args["href"].getStr()
       let content  = args["content"].getStr()
       let err = saveChapterIntoEpub(bookPath, href, content)
+      if err.len == 0:
+        # Salvataggio riuscito: niente ricarica dell'epub, aggiorna il DOM
+        # (ri-render del capitolo corrente) e verifica esito con MessageBox.
+        w.eval(updateChapterDomJs)
+        discard MessageBox(0, "Saving succeeded", "Epub Editor", MB_OK)
       let res = %*{"ok": err.len == 0, "error": err}
       let js = "window._nimCallbacks[" & cbId & "](" & $res & ")"
       w.eval(js)

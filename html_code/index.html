@@ -49,6 +49,18 @@
     #title { flex: 1; text-align: center; font-weight: 600; overflow: hidden;
              white-space: nowrap; text-overflow: ellipsis; }
     #chapter { font-size: 12px; color: #aaa; }
+    #padInput {
+      width: 4.2rem;
+      padding: 5px 6px;
+      border: 1px solid #666;
+      border-radius: 4px;
+      background: #2f2f2f;
+      color: #eee;
+      font-size: 13px;
+      text-align: center;
+    }
+    #padInput:focus { outline: none; border-color: #5a7fb0; }
+    #padInput::placeholder { color: #888; }
     #filesToggle.active { background: #777; }
 
     /* Sidebar condivisa (stile) */
@@ -293,6 +305,8 @@
       <option value="90" selected>90%</option>
       <option value="100">100%</option>
     </select>
+    <input id="padInput" type="number" min="0" max="30" step="1" value="10"
+           placeholder="Pad %" title="Padding percentuale del testo (vuoto = default epub.js)">
     <span id="title">Lettore EPUB</span>
     <span id="chapter"></span>
   </div>
@@ -345,6 +359,8 @@
     var statusEl = document.getElementById("status");
     var bookListEl = document.getElementById("bookList");
     var librarySidebar = document.getElementById("librarySidebar");
+    var padInput = document.getElementById("padInput");
+    var chapterPadPercent = 10; // default: padding 10% (vuoto = default epub.js)
 
     // --- Bridge Nim ⟷ JavaScript (webview2 / miowv) ---
     window._nimCallbacks = {};
@@ -477,6 +493,17 @@
         width: "100%",
         height: "100%",
         flow: "paginated"
+      });
+
+      // Ad ogni render (apertura libro, cambio capitolo, resize) ri-applica il
+      // padding percentuale scelto e osserva il body del capitolo per ri-applicarlo
+      // anche quando epub.js riscrive il suo padding inline (EXPAND/RESIZE).
+      rendition.on("rendered", function () {
+        applyChapterPadding();
+        var contents = rendition.getContents();
+        if (contents) contents.forEach(function (c) {
+          if (c && c.document) watchChapterPadding(c.document.body);
+        });
       });
 
       rendition.display().then(function () {
@@ -643,6 +670,87 @@
       if (rendition) rendition.resize();
     });
 
+    // --- Padding percentuale personalizzato del capitolo ---
+    // epub.js scrive il padding del body in px con inline style (e !important su
+    // left/right) e lo riscrive a ogni EXPAND/RESIZE. Per vincere senza toccare
+    // epub.js: setProperty con lo stesso nome proprietà SOSTITUISCE la sua
+    // dichiarazione nella style attribute (inline !important vs inline !important
+    // vince la più recente, quindi la nostra), e il MutationObserver sul body
+    // ri-applica il nostro valore ogni volta che epub.js lo sovrascrive.
+    // Oltre al padding, compensiamo column-gap/column-width (vedi sotto) così le
+    // colonne restano allineate allo scroll di epub.js anche con padding > gap/2.
+    var padObservers = new WeakMap(); // body -> MutationObserver
+
+    function applyChapterPadding() {
+      if (!rendition) return;
+      var contents = rendition.getContents();
+      if (!contents) return;
+      // Geometria reale calcolata da epub.js (Layout.calculate): width, divisor,
+      // gap e delta usati dallo scroll tra le pagine.
+      var layout = rendition._layout || (rendition.manager && rendition.manager.layout);
+      var W = layout ? layout.width : 0;
+      var divisor = layout && layout.divisor ? layout.divisor : 1;
+      contents.forEach(function (c) {
+        if (!c || !c.document) return;
+        var body = c.document.body;
+        if (!body) return;
+        if (chapterPadPercent == null) {
+          // campo vuoto: togli i nostri valori (epub.js ri-applica i suoi al resize)
+          ["padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+           "column-width", "column-gap"]
+            .forEach(function (p) {
+              body.style.removeProperty(p);
+              body.style.removeProperty("-webkit-" + p);
+            });
+        } else if (W > 0) {
+          var ppx = Math.min(W * chapterPadPercent / 100, W * 0.2);
+          // Compensazione colonne: epub.js pagina assumendo padding = gap/2 per
+          // lato; se lo superiamo, lo step colonna (colonna + gap) diventa minore
+          // di delta e la colonna successiva sborda nella pagina (colonna tagliata).
+          // Ricalcoliamo gap e column-width cosi' lo step resta esattamente delta:
+          //   single: colWidth = W - 2p,  gap = 2p   -> step = W      (= delta)
+          //   spread: colWidth = W/2 - 2p, gap = 2p  -> step = W/2    (= delta/2)
+          var colGap = 2 * ppx;
+          var colWidth = (W - 2 * ppx - (divisor - 1) * 2 * ppx) / divisor;
+          ["padding-top", "padding-right", "padding-bottom", "padding-left"]
+            .forEach(function (prop) { body.style.setProperty(prop, ppx + "px", "important"); });
+          body.style.setProperty("column-gap", colGap + "px", "important");
+          body.style.setProperty("-webkit-column-gap", colGap + "px", "important");
+          body.style.setProperty("column-width", colWidth + "px", "important");
+          body.style.setProperty("-webkit-column-width", colWidth + "px", "important");
+        }
+      });
+    }
+
+    function watchChapterPadding(body) {
+      if (!body || padObservers.has(body)) return;
+      var obs = new MutationObserver(function () {
+        if (!body.isConnected) {
+          obs.disconnect();
+          padObservers.delete(body);
+          return;
+        }
+        if (chapterPadPercent != null) applyChapterPadding();
+      });
+      obs.observe(body, { attributes: true, attributeFilter: ["style"] });
+      padObservers.set(body, obs);
+    }
+
+    padInput.addEventListener("change", function () {
+      var v = parseInt(this.value, 10);
+      if (this.value === "" || isNaN(v) || v <= 0) {
+        // vuoto o non valido -> default epub.js
+        this.value = "";
+        chapterPadPercent = null;
+        applyChapterPadding();
+        if (rendition) rendition.resize(); // epub.js ri-applica i suoi default
+      } else {
+        chapterPadPercent = Math.min(v, 30);
+        this.value = chapterPadPercent;
+        applyChapterPadding();
+      }
+    });
+
     // Tastiera: frecce per navigare, Esc per chiudere le sidebar
     document.addEventListener("keydown", function (e) {
       // Dentro l'editor HTML le frecce muovono il cursore, non sfogliano
@@ -715,7 +823,9 @@
     });
     document.getElementById("reloadEditor").addEventListener("click", loadEditorContent);
 
-    // Salva il codice HTML modificato dentro il file .epub e ricarica
+    // Salva il codice HTML modificato dentro il file .epub e aggiorna il DOM
+    // (il bridge Nim ri-renderizza il capitolo e mostra la MessageBox di conferma,
+    // quindi non serve ricaricare l'epub)
     document.getElementById("saveBtn").addEventListener("click", function () {
       if (!book || !currentHref) return;
       var btn = document.getElementById("saveBtn");
@@ -734,10 +844,8 @@
         btn.disabled = false;
         if (res && res.ok) {
           setStatus("Modifiche salvate nel file .epub ✓");
-          var busted = currentBookUrl +
-            (currentBookUrl.indexOf("?") >= 0 ? "&" : "?") + "_=" + Date.now();
-          openBook(busted); // ricarica il libro per applicare le modifiche
-          showTab("view");
+          // Niente ricarica dell'epub: il bridge Nim ha gia' aggiornato il DOM
+          // (ri-render del capitolo corrente) e mostrato la MessageBox.
         } else {
           setStatus("Errore nel salvataggio: " + ((res && res.error) || "sconosciuto"));
         }
