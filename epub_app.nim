@@ -195,8 +195,17 @@ const updateChapterDomJs = """
       views[i].displayed = false;
     }
   }
-  // 3) Ri-renderizza il capitolo corrente nel viewer.
-  window.rendition.display(window.currentHref);
+  // 3) Ri-renderizza il capitolo corrente nel viewer. Se il viewer e'
+  //    nascosto (tab Modifica HTML) il ri-render produrrebbe un iframe 0x0
+  //    e la pagina di lettura resterebbe bianca: in quel caso il ri-render
+  //    viene rimandato al ritorno sulla tab Lettura (showTab legge il flag
+  //    window._epubNeedsRefresh).
+  var viewerEl = document.getElementById('viewer');
+  if (viewerEl && viewerEl.style.display === 'none') {
+    window._epubNeedsRefresh = true;
+  } else {
+    window.rendition.display(window.currentHref);
+  }
 })();
 """
 
@@ -227,8 +236,12 @@ proc handleBridge(w: Webview; arg: cstring) =
       let bookPath = args["book"].getStr()
       let href     = args["href"].getStr()
       let content  = args["content"].getStr()
+      # "silent" = salvataggio in-context dal popover del viewer: il frontend
+      # ha gia' aggiornato il DOM (ri-render con CFI) e ri-patcha l'archive in
+      # memoria da solo, quindi niente MessageBox e niente updateChapterDomJs.
+      let silent   = args.hasKey("silent") and args["silent"].getBool()
       let err = saveChapterIntoEpub(bookPath, href, content)
-      if err.len == 0:
+      if err.len == 0 and not silent:
         # Salvataggio riuscito: niente ricarica dell'epub, aggiorna il DOM
         # (ri-render del capitolo corrente) e verifica esito con MessageBox.
         w.eval(updateChapterDomJs)

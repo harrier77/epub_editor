@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Lettore EPUB</title>
+  <link rel="icon" href="data:,">
   <!-- JSZip va caricato PRIMA di epub.js: il build lo tratta come dipendenza esterna.
        Path relativi: in standalone WebView2 i file vivono in html_code/ (niente server). -->
   <script src="jszip.min.js"></script>
@@ -202,6 +203,11 @@
       border-color: #fafafa;
     }
     #tabs .tab:disabled { opacity: .4; cursor: default; }
+    #tabs .tab.actionBtn {
+      background: #3f3f2c;
+      border-color: #5d5d33;
+    }
+    #tabs .tab.actionBtn:hover { background: #55553a; }
 
     #viewer {
       flex: 1;
@@ -274,6 +280,106 @@
 
     .epub-container { touch-action: none; }
 
+    /* Popover editing in-context (paragrafo cliccato nel viewer) */
+    #inlineEditor {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      width: 380px;
+      max-width: 90vw;
+      min-width: 280px;
+      min-height: 160px;
+      overflow: hidden;
+      background: #262626;
+      border: 1px solid #666;
+      border-radius: 8px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.55);
+      flex-direction: column;
+      font-size: 13px;
+    }
+    #inlineEditor.open { display: flex; }
+    .ieHead {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: #2f2f2f;
+      border-bottom: 1px solid #555;
+      border-radius: 8px 8px 0 0;
+    }
+    .ieHead span {
+      flex: 1;
+      font-family: Consolas, monospace;
+      font-size: 12px;
+      color: #bbb;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .ieHead button {
+      background: none;
+      border: none;
+      color: #ccc;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 2px;
+    }
+    .ieHead button:hover { color: #fff; }
+    #ieCode {
+      width: 100%;
+      flex: 1 1 auto;
+      min-height: 90px;
+      max-height: 45vh;
+      border: none;
+      outline: none;
+      resize: none;
+      padding: 8px;
+      background: #1e1e1e;
+      color: #dcdcdc;
+      font-family: Consolas, 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      tab-size: 2;
+      white-space: pre-wrap;   /* testo a capo invece dello scroll orizzontale */
+      overflow-wrap: break-word;
+      word-break: break-word;
+      overflow: auto;
+    }
+    /* Grip per il ridimensionamento manuale (in basso a destra) */
+    #ieGrip {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      width: 18px;
+      height: 18px;
+      cursor: nwse-resize;
+      background: linear-gradient(135deg, transparent 50%, #7a7a7a 50%);
+      border-bottom-right-radius: 7px;
+      user-select: none;
+    }
+    #ieGrip:hover { background: linear-gradient(135deg, transparent 50%, #a0a0a0 50%); }
+    .ieFoot {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 8px 10px;
+      border-top: 1px solid #555;
+    }
+    .ieFoot button {
+      background: #555;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 14px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .ieFoot button:hover { background: #666; }
+    .ieFoot button:disabled { opacity: .4; cursor: default; }
+    #ieSave { background: #3d7a3d; }
+    #ieSave:hover { background: #4a8f4a; }
+    #ieSave:disabled { background: #555; }
+
     #status {
       position: fixed;
       top: 55px; left: 50%; transform: translateX(-50%);
@@ -315,6 +421,8 @@
   <div id="tabs">
     <button id="tabView" class="tab active">📖 Lettura</button>
     <button id="tabEdit" class="tab" disabled>✏️ Modifica HTML</button>
+    <button id="tabEditSel" class="tab actionBtn"
+      title="Mostra l'editor in-context per il paragrafo appena cliccato nel lettore (clicca prima sul paragrafo)">✏️ Paragrafo selezionato</button>
   </div>
 
   <div id="viewer"></div>
@@ -328,6 +436,20 @@
     </div>
     <textarea id="codeEditor" spellcheck="false" wrap="off"
       placeholder="Apri un capitolo e seleziona la tab 'Modifica HTML' per vederne il codice."></textarea>
+  </div>
+
+  <!-- Popover fluttuante: editing in-context del paragrafo cliccato -->
+  <div id="inlineEditor" aria-hidden="true">
+    <div class="ieHead">
+      <span id="ieTitle">Modifica paragrafo</span>
+      <button id="ieClose" title="Chiudi (Esc)">✕</button>
+    </div>
+    <textarea id="ieCode" spellcheck="false"></textarea>
+    <div class="ieFoot">
+      <button id="ieCancel">Annulla</button>
+      <button id="ieSave">💾 Salva</button>
+    </div>
+    <div id="ieGrip" title="Ridimensiona"></div>
   </div>
 
   <!-- Sidebar sinistra: libreria (scelta del libro) -->
@@ -502,7 +624,10 @@
         applyChapterPadding();
         var contents = rendition.getContents();
         if (contents) contents.forEach(function (c) {
-          if (c && c.document) watchChapterPadding(c.document.body);
+          if (c && c.document) {
+            watchChapterPadding(c.document.body);
+            bindInlineEdit(c); // prepara il popover in-context al click (invisibile)
+          }
         });
       });
 
@@ -534,8 +659,13 @@
 
         // Aggiorna il capitolo corrente (usato dall'editor HTML)
         currentHref = location.start && location.start.href ? location.start.href : null;
+        // Se cambia capitolo chiudi il popover di editing in-context
+        if (inlineEditor.classList.contains("open") && inlineCtx) {
+          var curHref = currentHref ? currentHref.split("#")[0] : null;
+          if (!curHref || curHref !== (inlineCtx.href || "").split("#")[0]) closeInlineEditor();
+        }
         var editorPanel = document.getElementById("editorPanel");
-        if (editorPanel.style.display !== "none") loadEditorContent();
+        if (getComputedStyle(editorPanel).display !== "none") loadEditorContent();
 
         // Evidenzia il file attivo nella sidebar (browser del pacchetto)
         for (var h in fileEls) fileEls[h].classList.remove("active");
@@ -751,17 +881,23 @@
       }
     });
 
-    // Tastiera: frecce per navigare, Esc per chiudere le sidebar
+    // Tastiera: frecce per navigare, Esc per chiudere le sidebar / popover
     document.addEventListener("keydown", function (e) {
-      // Dentro l'editor HTML le frecce muovono il cursore, non sfogliano
-      var isEditor = e.target && e.target.id === "codeEditor";
+      // Dentro gli editor (full-chapter o popover in-context) le frecce
+      // muovono il cursore, non sfogliano
+      var t = e.target;
+      var isEditor = t && (t.id === "codeEditor" || t.id === "ieCode");
       if (isEditor) {
-        if (e.key === "Escape") showTab("view");
+        if (e.key === "Escape") {
+          if (t.id === "ieCode") closeInlineEditor();
+          else showTab("view");
+        }
         return;
       }
       if (e.key === "ArrowRight") rendition && rendition.next();
       if (e.key === "ArrowLeft") rendition && rendition.prev();
       if (e.key === "Escape") {
+        if (inlineEditor.classList.contains("open")) { closeInlineEditor(); return; }
         closeLibrary();
         document.getElementById("sidebar").classList.remove("open");
         document.getElementById("filesToggle").classList.remove("active");
@@ -770,6 +906,7 @@
 
     // --- Tab: lettura / modifica HTML ---
     function showTab(which) {
+      closeInlineEditor(); // il popover in-context vive solo nel viewer
       var viewTab = document.getElementById("tabView");
       var editTab = document.getElementById("tabEdit");
       var editorPanel = document.getElementById("editorPanel");
@@ -784,7 +921,24 @@
         viewTab.classList.add("active");
         editorPanel.style.display = "none";
         viewer.style.display = "block";
-        if (rendition) rendition.resize(); // ricalcola il layout paginato
+        if (rendition) {
+          // Se un salvataggio e' avvenuto col viewer nascosto, il ri-render
+          // e' stato rimandato (flag impostato da updateChapterDomJs nel
+          // bridge): forza un refresh pulito invece del resize, che sarebbe
+          // no-op con dimensioni invariate e lascerebbe l'iframe 0x0
+          // (pagina bianca).
+          if (window._epubNeedsRefresh) {
+            window._epubNeedsRefresh = false;
+            var loc = rendition.currentLocation ? rendition.currentLocation() : null;
+            var target = (loc && loc.start && loc.start.cfi) || window.currentHref;
+            rendition.clear();
+            rendition.display(target).catch(function () {
+              rendition.display(window.currentHref).catch(function () {});
+            });
+          } else {
+            rendition.resize(); // ricalcola il layout paginato
+          }
+        }
       }
     }
 
@@ -821,6 +975,19 @@
     document.getElementById("tabEdit").addEventListener("click", function () {
       showTab("edit");
     });
+    // Rende visibile il popover in-context preparato dal click sul paragrafo
+    document.getElementById("tabEditSel").addEventListener("click", function () {
+      if (!inlineCtx) {
+        setStatus("Clicca prima su un paragrafo nel libro, poi ripremi questo bottone.");
+        return;
+      }
+      inlineEditor.setAttribute("aria-hidden", "false");
+      inlineEditor.classList.add("open");
+      positionInlineEditor(inlineCtx.px, inlineCtx.py); // ri-clampa con dimensioni reali
+      ieCode.focus();
+      ieCode.select();
+      setStatus("");
+    });
     document.getElementById("reloadEditor").addEventListener("click", loadEditorContent);
 
     // Salva il codice HTML modificato dentro il file .epub e aggiorna il DOM
@@ -853,6 +1020,381 @@
         btn.disabled = false;
         setStatus("Errore del bridge: " + err);
       });
+    });
+
+    // ==================================================================
+    // Editing in-context: clic su un paragrafo nel rendering epub.js
+    // ==================================================================
+    // Il capitolo vive in un iframe (documento XHTML): i click non risalgono
+    // alla pagina madre, quindi li catturiamo sul documento di ogni Contents
+    // di epub.js (via rendition.getContents() nel hook "rendered"). Per il
+    // paragrafo cliccato generiamo un CFI con section.cfiFromElement: dopo il
+    // salvataggio ri-renderizziamo il capitolo dall'archive patchato e
+    // riposizioniamo il viewer sul paragrafo con rendition.display(cfi).
+    var inlineEditor = document.getElementById("inlineEditor");
+    var ieCode = document.getElementById("ieCode");
+    var ieSave = document.getElementById("ieSave");
+    var ieCancel = document.getElementById("ieCancel");
+    var ieClose = document.getElementById("ieClose");
+    var inlineBoundDocs = new WeakSet(); // documenti iframe gia' collegati
+    var inlineCtx = null;                // { doc, element, section, href, archPath, cfi, px, py }
+
+    var INLINE_BLOCK_RE = /^(p|div|h[1-6]|li|blockquote|pre|section|article|figure|figcaption|table|tr|td|th|ul|ol|dl|dd|dt|aside|header|footer|main|address|center)$/i;
+
+    // Dal target del click risale al blocco piu' interno editabile
+    function inlineBlockFrom(target) {
+      var el = target;
+      for (var i = 0; el && i < 8; i++) {
+        if (el.nodeType !== 1) { el = el.parentNode; continue; }
+        var tag = (el.localName || el.tagName || "").toLowerCase();
+        if (tag === "body" || tag === "html") return null;
+        if (INLINE_BLOCK_RE.test(tag)) {
+          // Ignora il wrapper che contiene l'intero capitolo
+          // (unico figlio element del body): meglio usare la tab Modifica HTML
+          if ((tag === "div" || tag === "section" || tag === "article") &&
+              el.parentNode && el.parentNode === el.ownerDocument.body &&
+              el.parentNode.children.length <= 1) {
+            return null;
+          }
+          return el;
+        }
+        el = el.parentNode;
+      }
+      return null;
+    }
+
+    function iframeForDoc(doc) {
+      try {
+        var fe = doc.defaultView && doc.defaultView.frameElement;
+        if (fe) return fe;
+      } catch (e) { /* fallback sotto */ }
+      if (rendition && rendition.manager) {
+        var views = rendition.manager.views.all();
+        for (var i = 0; i < views.length; i++) {
+          var v = views[i];
+          if (v.contents && v.contents.document === doc && v.iframe) return v.iframe;
+        }
+      }
+      return null;
+    }
+
+    // Al click su un blocco PREPARA il popover in-context (resta invisibile);
+    // il bottone "Paragrafo selezionato" lo rende visibile. Il click non
+    // interferisce con la selezione del testo.
+    function bindInlineEdit(contents) {
+      var doc = contents && contents.document;
+      if (!doc || inlineBoundDocs.has(doc)) return;
+      inlineBoundDocs.add(doc);
+      doc.addEventListener("click", function (e) {
+        if (e.button && e.button !== 0) return;              // solo click sinistro
+        var t = e.target;
+        if (t && t.closest && t.closest("a")) { closeInlineEditor(); return; } // i link li gestisce epub.js
+        var el = t ? inlineBlockFrom(t) : null;
+        if (!el) {
+          // Fallback: se il click cade fuori dal blocco (es. selezione a
+          // cavallo di due paragrafi) usa la selezione corrente
+          var sel = doc.getSelection ? doc.getSelection() : null;
+          if (sel && sel.rangeCount && !sel.isCollapsed) {
+            el = inlineBlockFrom(sel.getRangeAt(0).startContainer);
+          }
+        }
+        if (!el) { closeInlineEditor(); return; }
+        openInlineEditor(contents, el, e, false);            // prepara senza mostrare
+      });
+    }
+
+    // Prepara (o mostra, se show !== false) l'editor in-context sul blocco
+    // dato. ev e' opzionale: senza evento mouse il popover viene posizionato
+    // sotto il testo selezionato o, in ultima istanza, nell'angolo della view.
+    function openInlineEditor(contents, el, ev, show) {
+      var section = book.spine ? book.spine.spineItems[contents.sectionIndex] : null;
+      if (!section) return;
+      var cfi = null;
+      try { cfi = section.cfiFromElement(el); } catch (err) { cfi = null; }
+      var px = null, py = null;
+      if (ev && typeof ev.clientX === "number") { px = ev.clientX; py = ev.clientY; }
+      else {
+        try {
+          var sel = contents.document.getSelection();
+          var r = sel && sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
+          if (r && r.width + r.height > 0) { px = r.right; py = r.bottom; }
+        } catch (e) { /* coordinate non disponibili */ }
+        if (px == null) { px = 120; py = 120; }
+      }
+      inlineCtx = {
+        doc: contents.document,
+        element: el,
+        section: section,
+        href: section.href,
+        archPath: (section.url || section.href || "").replace(/^\//, ""),
+        cfi: cfi,
+        px: px,
+        py: py
+      };
+      ieSave.disabled = false; // riabilita il pulsante tra un salvataggio e l'altro
+      // HTML grezzo del paragrafo (es. <p>testo</p>), serializzazione XML;
+      // gli LF del sorgente vengono rimossi: resta solo il wrap soft
+      var html = "";
+      try { html = el.outerHTML; } catch (e) { html = new XMLSerializer().serializeToString(el); }
+      ieCode.value = html.replace(/\s*[\r\n]+\s*/g, " ");
+      positionInlineEditor(px, py);
+      if (show !== false) {
+        inlineEditor.setAttribute("aria-hidden", "false");
+        inlineEditor.classList.add("open");
+        ieCode.focus();
+        ieCode.select();
+      }
+    }
+
+    // Posiziona il popover in coordinate della pagina madre; quando e' ancora
+    // invisibile (preparato) usa dimensioni stimate per il clamp.
+    function positionInlineEditor(px, py) {
+      var ifr = inlineCtx ? iframeForDoc(inlineCtx.doc) : null;
+      var rect = ifr ? ifr.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+      var w = inlineEditor.offsetWidth || 380;
+      var h = inlineEditor.offsetHeight || 220;
+      var x = Math.max(8, Math.min(rect.left + px + 14, window.innerWidth - w - 8));
+      var y = Math.max(8, Math.min(rect.top + py + 14, window.innerHeight - h - 8));
+      inlineEditor.style.left = x + "px";
+      inlineEditor.style.top = y + "px";
+    }
+
+    function closeInlineEditor() {
+      inlineEditor.classList.remove("open");
+      inlineEditor.setAttribute("aria-hidden", "true");
+      if (document.activeElement === ieCode) ieCode.blur(); // toglie il focus da un elemento nascosto
+      inlineCtx = null;
+    }
+
+    // Patch dell'archive in memoria: per quel path il prossimo request
+    // restituisce il testo aggiornato (stessa tecnica di updateChapterDomJs
+    // nel bridge Nim) cosi' il ri-render non rilegge il vecchio contenuto.
+    function patchArchiveForChapter(archPath, newText) {
+      if (!book || !book.archive) return;
+      var archive = book.archive;
+      var origRequest = archive.request.bind(archive);
+      archive.request = function (url, type) {
+        var p = window.decodeURIComponent(String(url).substr(1));
+        if (p === archPath) {
+          if (!type) {
+            var m = /\.([a-z0-9]+)$/i.exec(String(url));
+            type = m ? m[1].toLowerCase() : "";
+          }
+          try {
+            return Promise.resolve(archive.handleResponse(newText, type));
+          } catch (e) {
+            return Promise.resolve(newText);
+          }
+        }
+        return origRequest(url, type);
+      };
+    }
+
+    // Converte l'HTML inserito dall'utente in un nodo nel namespace XHTML.
+    // Prima prova il parsing XML rigoroso; se fallisce (es. <br>, <img>, <li>
+    // non autochiusi, & non escapato) usa il parser HTML tollerante e
+    // rinomina gli elementi nel namespace XHTML. La serializzazione finale
+    // (outerHTML su documento XML) escape sempre &, <, >. Ritorna null se
+    // l'HTML non produce alcun elemento.
+    function parseUserHtml(newHtml, doc) {
+      var XHTML_NS = "http://www.w3.org/1999/xhtml";
+      // 1) Parsing XML rigoroso (XHTML)
+      var xdoc = new DOMParser().parseFromString(
+        '<div xmlns="' + XHTML_NS + '">' + newHtml + "</div>",
+        "application/xhtml+xml");
+      if (!xdoc.getElementsByTagName("parsererror").length) {
+        var xe = xdoc.documentElement.firstElementChild;
+        if (xe) return doc.importNode(xe, true);
+      }
+      // 2) Parsing HTML tollerante + rinominazione nel namespace XHTML
+      var hdoc = new DOMParser().parseFromString("<div>" + newHtml + "</div>", "text/html");
+      var wrapper = hdoc.body ? hdoc.body.firstElementChild : null;
+      var src = wrapper ? wrapper.firstElementChild : null;
+      if (!src) return null;
+      function rebuild(srcNode) {
+        var node;
+        if (srcNode.nodeType === 1) {
+          // <svg>/<math> mantengono il loro namespace, il resto va in XHTML
+          var ns = (srcNode.namespaceURI && srcNode.namespaceURI !== XHTML_NS)
+            ? srcNode.namespaceURI : XHTML_NS;
+          node = doc.createElementNS(ns, srcNode.localName);
+          for (var i = 0; i < srcNode.attributes.length; i++) {
+            var a = srcNode.attributes[i];
+            if (a.namespaceURI) node.setAttributeNS(a.namespaceURI, a.name, a.value);
+            else node.setAttribute(a.name, a.value);
+          }
+          for (var j = 0; j < srcNode.childNodes.length; j++) {
+            var kid = rebuild(srcNode.childNodes[j]);
+            if (kid) node.appendChild(kid);
+          }
+          return node;
+        }
+        if (srcNode.nodeType === 3) return doc.createTextNode(srcNode.nodeValue);
+        if (srcNode.nodeType === 8) return doc.createComment(srcNode.nodeValue);
+        return null;
+      }
+      return rebuild(src);
+    }
+
+    // Ricostruisce il capitolo col paragrafo sostituito, partendo dal testo
+    // ORIGINALE dell'archive: cosi' NON vengono salvati gli stili inline di
+    // runtime che epub.js scrive sul body (padding/column-*) ne' il link
+    // canonical che inietta nel <head>. Il paragrafo viene localizzato per
+    // percorso di indici tra figli-element (identico tra DOM live e documento
+    // pulito, dato che epub.js non altera la struttura del DOM).
+    function buildEditedChapter(ctx, newHtml) {
+      return book.archive.request("/" + ctx.archPath, "text").then(function (origText) {
+        var rawText = String(origText || "").replace(/^\uFEFF/, "");
+        var cleanText = rawText.replace(/^\s*<\?xml[^>]*\?>\s*/, "");
+        var cleanDoc = new DOMParser().parseFromString(cleanText, "application/xhtml+xml");
+        if (cleanDoc.getElementsByTagName("parsererror").length) {
+          throw new Error("il documento non e' XHTML valido");
+        }
+        // Percorso (indici tra figli-element) dell'elemento cliccato
+        var path = [];
+        var el = ctx.element;
+        while (el && el.nodeType === 1 && el !== ctx.doc.documentElement) {
+          var parent = el.parentNode;
+          var idx = -1;
+          if (parent) {
+            var kids = parent.children;
+            for (var i = 0; i < kids.length; i++) {
+              if (kids[i] === el) { idx = i; break; }
+            }
+          }
+          path.unshift(idx);
+          el = parent;
+        }
+        var target = cleanDoc.documentElement;
+        for (var j = 0; j < path.length && target; j++) {
+          target = target.children[path[j]];
+        }
+        if (!target) throw new Error("elemento non trovato nel documento originale");
+        // Nuovo nodo dall'HTML inserito: parsing XHTML rigoroso con fallback
+        // HTML tollerante (vedi parseUserHtml)
+        var node = parseUserHtml(newHtml, cleanDoc);
+        if (!node) throw new Error("HTML non valido: " + newHtml);
+        target.parentNode.replaceChild(node, target);
+        // Serializza conservando il preambolo originale (<?xml?>, <!DOCTYPE>, commenti)
+        var m = /\<html[\s>]/i.exec(rawText);
+        var prefix = m ? rawText.substring(0, m.index) : "";
+        var out = prefix + cleanDoc.documentElement.outerHTML;
+        if (!/\<html\b[^>]*\bxmlns\s*=/i.test(out)) {
+          out = out.replace(/<html([ >])/i, '<html xmlns="http://www.w3.org/1999/xhtml"$1');
+        }
+        return out;
+      });
+    }
+
+    ieSave.addEventListener("click", function () {
+      if (!inlineCtx || !book || !currentBookUrl) return;
+      var ctx = inlineCtx;
+      var newHtml = ieCode.value.trim();
+      if (!newHtml) { setStatus("HTML vuoto: inserisci un elemento."); return; }
+      ieSave.disabled = true;
+      buildEditedChapter(ctx, newHtml)
+        .then(function (newChapter) {
+          // Persistenza sul disco (.epub) senza MessageBox / re-render automatico
+          return api.saveChapter({
+            book: currentBookUrl.replace(/^\//, ""),
+            href: ctx.archPath,
+            content: newChapter,
+            silent: true
+          }).then(function (res) {
+            if (!res || !res.ok) throw new Error((res && res.error) || "salvataggio fallito");
+            return newChapter;
+          });
+        })
+        .then(function (newChapter) {
+          // 1) Archive in memoria aggiornato: il documento del viewer riflette
+          //    la modifica ad ogni futuro re-render
+          patchArchiveForChapter(ctx.archPath, newChapter);
+          // 2) Sincronizza l'editor full-chapter (tab Modifica HTML)
+          if (currentHref && ctx.href &&
+              currentHref.split("#")[0] === ctx.href.split("#")[0]) {
+            document.getElementById("codeEditor").value = newChapter;
+          }
+          // 3) Invalida la cache della sezione: Section.load() fa cache del
+          //    documento parsato (this.contents); senza questo il ri-render
+          //    riuserebbe il contenuto VECCHIO ignorando l'archive patchato.
+          if (ctx.section) {
+            ctx.section.contents = undefined;
+            ctx.section.document = undefined;
+            ctx.section.output = undefined;
+          }
+          closeInlineEditor();
+          setStatus("Paragrafo aggiornato ✓");
+          // 4) Ri-render del viewer dal contenuto aggiornato, riposizionato
+          //    sul paragrafo. clear() e' necessario: con la sezione gia'
+          //    visibile display() non ricarica il documento.
+          if (rendition) {
+            rendition.clear();
+            rendition.display(ctx.cfi || ctx.href).catch(function () {});
+          }
+        })
+        .catch(function (err) {
+          ieSave.disabled = false;
+          setStatus("Errore: " + (err && err.message ? err.message : err));
+        });
+    });
+
+    ieCancel.addEventListener("click", closeInlineEditor);
+    ieClose.addEventListener("click", closeInlineEditor);
+
+    // Trascina il popover dalla barra del titolo (Pointer Events + capture:
+    // gli eventi continuano ad arrivare anche se il puntatore passa sopra
+    // l'iframe del viewer)
+    inlineEditor.querySelector(".ieHead").addEventListener("pointerdown", function (e) {
+      if (e.target && e.target.closest && e.target.closest("button")) return;
+      e.preventDefault();
+      var head = this;
+      try { head.setPointerCapture(e.pointerId); } catch (err) {}
+      var startX = e.clientX, startY = e.clientY;
+      var origLeft = parseFloat(inlineEditor.style.left) || 0;
+      var origTop = parseFloat(inlineEditor.style.top) || 0;
+      function onMove(ev) {
+        inlineEditor.style.left = (origLeft + ev.clientX - startX) + "px";
+        inlineEditor.style.top = (origTop + ev.clientY - startY) + "px";
+      }
+      function onUp() {
+        head.removeEventListener("pointermove", onMove);
+        head.removeEventListener("pointerup", onUp);
+      }
+      head.addEventListener("pointermove", onMove);
+      head.addEventListener("pointerup", onUp);
+    });
+
+    // Ridimensiona il popover dal grip in basso a destra
+    document.getElementById("ieGrip").addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var grip = this;
+      try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+      var startX = e.clientX, startY = e.clientY;
+      var origW = inlineEditor.offsetWidth, origH = inlineEditor.offsetHeight;
+      function onMove(ev) {
+        inlineEditor.style.width =
+          Math.min(Math.max(280, origW + ev.clientX - startX), window.innerWidth - 16) + "px";
+        inlineEditor.style.height =
+          Math.min(Math.max(160, origH + ev.clientY - startY), window.innerHeight - 16) + "px";
+      }
+      function onUp() {
+        grip.removeEventListener("pointermove", onMove);
+        grip.removeEventListener("pointerup", onUp);
+      }
+      grip.addEventListener("pointermove", onMove);
+      grip.addEventListener("pointerup", onUp);
+    });
+
+    // Clic fuori dal popover (nella pagina madre): chiudi. Il bottone
+    // "Paragrafo selezionato" e' escluso: il suo click arriva qui in bubbling
+    // DOPO l'handler del bottone, e chiuderebbe all'istante cio' che ha appena
+    // aperto (popover che si apre e si richiude subito = "non succede niente").
+    document.addEventListener("click", function (e) {
+      if (!inlineEditor.classList.contains("open")) return;
+      if (inlineEditor.contains(e.target)) return;
+      if (e.target && e.target.closest && e.target.closest("#tabEditSel")) return;
+      closeInlineEditor();
     });
 
     // All'avvio carica l'elenco dei libri dal backend Nim
