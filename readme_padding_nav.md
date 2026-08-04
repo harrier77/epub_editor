@@ -2,8 +2,9 @@
 
 This document explains why the **Next/Prev buttons appeared broken** in the EPUB
 reader (`html_code/index.html`) and how the issue was fixed by simplifying the
-reader code. It also sketches how a *native* percentage-padding feature could be
-added cleanly in the future, without re-introducing the fragility.
+reader code, and documents the **native percentage margin** that was added
+afterwards to keep the text away from the edges of the reading area — without
+re-introducing the fragility.
 
 ---
 
@@ -82,10 +83,54 @@ The reader was simplified so that **epub.js alone owns the layout**:
 - `index.html` is loaded at runtime by the WebView (it is not compiled into the
   `.exe`), so no rebuild is required — just restart the app.
 
-## Future: native percentage padding
+## Solution adopted: percentage margin on `.epub-container`
 
-If percentage padding is ever re-introduced, it should be done **natively**,
-without fighting epub.js. Options, from simplest to most invasive:
+To keep a comfortable margin between the text and the edge of the reading
+area, the margin is applied **on epub.js's own container element** — the
+`.epub-container` div that epub.js creates inside `#viewer` — not on the iframe
+bodies.
+
+`html_code/index.html`:
+
+```css
+.epub-container {
+  touch-action: none;
+  box-sizing: border-box;   /* essential: the container is width/height 100% */
+  padding: 3% 7%;           /* vertical / horizontal margin around the pages */
+}
+```
+
+Why this is safe (verified in the bundled epub.js build):
+
+- epub.js's `DOMElement.size()` reads the computed padding of `.epub-container`
+  and **subtracts it from the measured stage size** before `Layout.calculate()`
+  runs (epub.js:3783-3811). `columnWidth`, `gap` and `delta` are therefore
+  derived from the *reduced* area, so the page-step math stays exact — this
+  padding hook is a first-class part of epub.js's design.
+- `box-sizing: border-box` is required because the container is created with
+  `width: 100%` / `height: 100%` (`renderTo("viewer", { width: "100%",
+  height: "100%" })`). Without it the padding would inflate the container past
+  the viewer and `#viewer { overflow: hidden }` would clip the right side.
+- The pages (flex items inside the container, which epub.js lays out
+  horizontally) are placed inside the content box, so the whole reading area is
+  inset from the viewer edges.
+- The iframe-body padding that epub.js applies itself (20px top/bottom,
+  `gap/2` left/right, epub.js:6669-6672) is untouched — no `!important`, no
+  MutationObserver, no manual iframe resizing, so there is no feedback loop
+  with epub.js's `ResizeObserver`.
+- On window resize / `widthSelect` change, the app already calls
+  `rendition.resize()`, which re-reads the stage size (epub.js:4956) — the
+  percentage margin scales automatically.
+
+Percentages are relative to the container's *width* (CSS spec), so the margin
+scales with the window. On the default 900px viewer, 7% ≈ 63px per side.
+Tune the two numbers to taste.
+
+## Alternatives not adopted
+
+The solution above is the simplest native option. If the margin ever needs to
+live *inside* each page (a per-page gutter rather than around the whole reading
+area), the remaining options are:
 
 1. **`rendition.themes`** — inject a user stylesheet that epub.js applies on
    every render. Caveat: epub.js writes the layout paddings as *inline*

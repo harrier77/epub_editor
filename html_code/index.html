@@ -266,7 +266,11 @@
       overflow: auto;
     }
 
-    .epub-container { touch-action: none; }
+    .epub-container {
+      touch-action: none;
+      box-sizing: border-box;
+      padding: 3% 3%; /* margine attorno all'area di lettura; epub.js sottrae il padding del container dalla size */
+    }
 
     /* Popover editing in-context (paragrafo cliccato nel viewer) */
     #inlineEditor {
