@@ -2,7 +2,7 @@
 
 **Serverless** desktop application that displays `.epub` files in a WebView2
 window, reusing the same `epub.js` library from the original Flask project
-(`C:\Users\pr30565\Desktop\python\epub.js\reader`).
+(`\epub.js\reader`).
 
 The interface (HTML/CSS/JS) is the same as the Flask one, only duplicated and
 adapted for the Nim bridge. No HTTP: the `html_code/` folder is served by
