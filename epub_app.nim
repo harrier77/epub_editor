@@ -249,6 +249,16 @@ proc handleBridge(w: Webview; arg: cstring) =
       let res = %*{"ok": err.len == 0, "error": err}
       let js = "window._nimCallbacks[" & cbId & "](" & $res & ")"
       w.eval(js)
+    of "setZoom":
+      # Zoom browser (WebView2) applicato dal backend: la pagina intera viene
+      # zoomata; il frontend contro-ruota toolbar/sidebar e rifluisce con
+      # rendition.resize() (misura in CSS px coerenti con lo zoom).
+      let factor = if args.hasKey("factor"): args["factor"].getFloat() else: 1.0
+      let z = max(0.75, min(2.0, factor))
+      let hr = mio_setZoomFactor(w, z)
+      let res = %*{"ok": hr == S_OK, "factor": z}
+      let js = "window._nimCallbacks[" & cbId & "](" & $res & ")"
+      w.eval(js)
     else:
       echo "[epub] Comando sconosciuto: ", scope, "/", name
   except CatchableError as e:

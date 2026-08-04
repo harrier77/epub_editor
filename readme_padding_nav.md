@@ -96,7 +96,7 @@ bodies.
 .epub-container {
   touch-action: none;
   box-sizing: border-box;   /* essential: the container is width/height 100% */
-  padding: 3% 7%;           /* vertical / horizontal margin around the pages */
+  padding: 3% 3%;           /* margin around the pages (current default) */
 }
 ```
 
@@ -123,8 +123,53 @@ Why this is safe (verified in the bundled epub.js build):
   percentage margin scales automatically.
 
 Percentages are relative to the container's *width* (CSS spec), so the margin
-scales with the window. On the default 900px viewer, 7% ≈ 63px per side.
-Tune the two numbers to taste.
+scales with the window. On the default 900px viewer, 3% ≈ 27px per side. The
+horizontal value was reduced from 7% to **3%** during testing (a wide
+horizontal inset made column re-pagination feel off); `3% 3%` is the current
+default — tune the two numbers to taste.
+
+## Reader zoom: browser zoom on the reading area only
+
+A real **browser zoom** (WebView2 `ZoomFactor`) is applied to the whole page,
+and the fixed chrome (toolbar, tabs, status bar, sidebars, HTML editor panel)
+is counter-zoomed back with CSS `zoom: 1/Z` so it stays visually unchanged.
+`#viewer` stays at CSS zoom 1, so epub.js measures
+(`clientWidth`/`offsetWidth`, `getBoundingClientRect`) in CSS pixels that are
+consistent with the zoom — the geometry lesson from the padding incident is
+not violated (no body padding/columns overrides, no manual iframe resizing).
+
+### How it works
+
+- Toolbar buttons `A−`, `A+` and the percentage (click = reset to 100%) call
+  the Nim bridge (`api.setZoom`).
+- `epub_app.nim` clamps the factor (0.75–2.0) and calls the new
+  `mio_setZoomFactor` proc in **`webview2_nim`** (`miowebview2.nim`), which
+  sets `ICoreWebView2Controller::put_ZoomFactor`. Note: `webview2_nim` lives
+  outside this repository (`nim.cfg` points to it); the change there is
+  additive.
+- On the callback the frontend sets two CSS variables on `:root`:
+  - `--app-zoom` — the factor (e.g. `1.25`);
+  - `--chrome-zoom` — `1 / Z` (e.g. `0.8`).
+
+  `#toolbar, #tabs, #status, #editorPanel, #sidebar, #librarySidebar` use
+  `zoom: var(--chrome-zoom)`. `#viewer` and `#inlineEditor` are **excluded**:
+  the popover positions itself with the reading-content rects, which are
+  already zoom-consistent.
+- After one animation frame (so the CSS-px measurements are updated) the app
+  calls `rendition.resize()` — the same native path used on window resize and
+  `widthSelect` — so epub.js re-paginates for the new CSS-px stage size.
+  Result: true browser-zoom behavior (text, images and layout scale; the text
+  reflows into more/fewer pages), while the chrome keeps its size.
+
+### Notes
+
+- Range 75%–200%, step 25%; the value is kept for the session only.
+- The `.epub-container` percentage margins stay **visually constant** under
+  zoom: they resolve against the CSS-px stage, which shrinks as the zoom grows.
+- The zoom is a WebView2-level setting (whole page), but the counter-zoom makes
+  the UI chrome look unchanged.
+- Requires a rebuild (`compila.bat`) because the bridge and the
+  `miowebview2.nim` proc are compiled into `epub_app.exe`.
 
 ## Alternatives not adopted
 

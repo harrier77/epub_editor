@@ -272,6 +272,20 @@
       padding: 3% 3%; /* margine attorno all'area di lettura; epub.js sottrae il padding del container dalla size */
     }
 
+    /* Zoom browser (WebView2) sul solo contenuto di lettura.
+       WebView2 zooma l'intera pagina; il "chrome" fisso viene contro-ruotato
+       con zoom 1/Z per restare visivamente invariato. #viewer resta a zoom 1:
+       epub.js misura (clientWidth/offsetWidth) in CSS px coerenti con lo zoom.
+       #inlineEditor è escluso: si posiziona con le rect del contenuto letto. */
+    :root {
+      --app-zoom: 1;
+      --chrome-zoom: 1;
+    }
+    #toolbar, #tabs, #status, #editorPanel,
+    #sidebar, #librarySidebar {
+      zoom: var(--chrome-zoom);
+    }
+
     /* Popover editing in-context (paragrafo cliccato nel viewer) */
     #inlineEditor {
       display: none;
@@ -390,6 +404,9 @@
     <button id="filesToggle" title="File inclusi nell'EPUB">📂</button>
     <button id="prev" title="Pagina precedente" disabled style="width:4rem;font-size:1.2rem">‹</button>
     <button id="next" title="Pagina successiva" disabled style="width:4rem;font-size:1.2rem">›</button>
+    <button id="zoomOut" title="Riduci zoom (contenuto di lettura)" disabled>A−</button>
+    <button id="zoomReset" title="Reimposta zoom al 100%" disabled>100%</button>
+    <button id="zoomIn" title="Aumenta zoom (contenuto di lettura)" disabled>A+</button>
     <button id="spreadToggle" disabled>Una pagina</button>
     <select id="widthSelect" title="Larghezza massima pagina">
     <option value="30">30%</option>
@@ -506,6 +523,7 @@
     api.listBooks = createBridgeFn("epub", "listBooks");
     // saveChapter() → salva il codice HTML modificato dentro l'epub
     api.saveChapter = createBridgeFn("epub", "saveChapter");
+    api.setZoom = createBridgeFn("epub", "setZoom");
 
     function setStatus(msg) {
       statusEl.textContent = msg;
@@ -621,6 +639,9 @@
         document.getElementById("spreadToggle").disabled = false;
         document.getElementById("filesToggle").disabled = false;
         document.getElementById("tabEdit").disabled = false;
+        document.getElementById("zoomOut").disabled = false;
+        document.getElementById("zoomReset").disabled = false;
+        document.getElementById("zoomIn").disabled = false;
         var title = book.packaging.metadata.title;
         if (title) document.getElementById("title").textContent = title;
         try {
@@ -688,6 +709,28 @@
       document.getElementById("spreadToggle").textContent =
         spreadOn ? "Una pagina" : "Due pagine";
     });
+
+    // Zoom browser (WebView2) applicato dal backend: qui si gestiscono stato,
+    // variabili CSS (controrotazione del chrome) e rifluizione del lettore.
+    var readerZoom = 1, ZOOM_MIN = 0.75, ZOOM_MAX = 2, ZOOM_STEP = 0.25;
+    function applyZoom(z) {
+      if (!rendition) return;
+      z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+      readerZoom = z;
+      document.documentElement.style.setProperty("--app-zoom", z);
+      document.documentElement.style.setProperty("--chrome-zoom", 1 / z);
+      document.getElementById("zoomReset").textContent = Math.round(z * 100) + "%";
+      api.setZoom({ factor: z }).then(function () {
+        // Lo zoom WebView2 è applicato: attendi un frame (le misure in CSS px
+        // sono aggiornate) e rifluisci come accade su resize di finestra.
+        requestAnimationFrame(function () {
+          if (rendition) rendition.resize();
+        });
+      }).catch(function (err) { setStatus("Errore zoom: " + err); });
+    }
+    document.getElementById("zoomOut").addEventListener("click", function () { applyZoom(readerZoom - ZOOM_STEP); });
+    document.getElementById("zoomReset").addEventListener("click", function () { applyZoom(1); });
+    document.getElementById("zoomIn").addEventListener("click", function () { applyZoom(readerZoom + ZOOM_STEP); });
 
     // Sidebar: toggle on/off del browser del pacchetto EPUB
     document.getElementById("filesToggle").addEventListener("click", function () {
