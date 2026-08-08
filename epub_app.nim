@@ -10,6 +10,16 @@
 ##     leggendo il titolo da ciascun .epub con zippy (unzip in puro Nim).
 ##   - epub.js apre il file .epub via https://appassets/<nome>.epub e lo
 ##     unzipa da solo (JSZip), esattamente come nella versione Flask.
+##
+## Epub NON impacchettato (allineato a app.py / --book-dir):
+##   - La cartella esterna con l'output del translator (META-INF/ + OEBPS/)
+##     viene mappata su un secondo virtual host "https://ext/": i file sono
+##     letti dal disco a ogni richiesta, quindi le traduzioni salvate si
+##     vedono subito, senza ricompilare l'epub.
+##   - In Libreria appare come primo libro (type "folder"), come /ext/ di Flask.
+##   - Il salvataggio (saveChapter) scrive direttamente nel file della
+##     cartella (match case-insensitive, scrittura atomica .tmp + move).
+##   - Il pulsante "⟳ Ricarica" del frontend rilegge il capitolo dal disco.
 
 import
   miowv,
@@ -23,6 +33,14 @@ import
 const
   VHOST* = "appassets"          # https://appassets/...
   HOST_ACCESS_ALLOW = 1         # COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND::ALLOW
+  # Epub NON impacchettato (output del translator): cartella mappata su
+  # https://ext/ e mostrata come primo libro in Libreria (come --book-dir
+  # di app.py). Modifica qui il percorso se il translator scrive altrove.
+  FOLDER_HOST* = "ext"
+  FOLDER_BOOK_DIR* = r"C:\Users\pr30565\Desktop\python\translator\target"
+  # Chiave usata dal frontend per identificare il libro-cartella nei payload
+  # di saveChapter (corrisponde a FOLDER_BOOK_KEY di app.py).
+  FOLDER_BOOK_KEY* = "ext"
 
 # ------------------------------------------------------------------
 # Estrazione del titolo dall'OPF (stesso metodo di app.py con zipfile)
@@ -31,6 +49,18 @@ proc localTag(tag: string): string =
   ## Restituisce la parte locale di un tag XML, ignorando il prefisso
   ## di namespace (es. "dc:title" -> "title").
   split(tag, ':')[^1]
+
+proc titleFromOpfDoc(opf: XmlNode): string =
+  ## Legge <dc:title> dalla radice <package> di un OPF (metadata).
+  result = ""
+  for meta in opf:
+    if meta.kind != xnElement or localTag(meta.tag) != "metadata": continue
+    for el in meta:
+      if el.kind == xnElement and localTag(el.tag) == "title":
+        let t = el.innerText.strip()
+        if t.len > 0:
+          result = t
+          return
 
 proc epubTitle(path: string): string =
   ## Legge il titolo da un .epub usando zippy (unzip) e xmlparser.
@@ -61,15 +91,7 @@ proc epubTitle(path: string): string =
     if opfPath.len > 0:
       try:
         let opf = extractFile(reader, opfPath)
-        let odoc = parseXml(opf)   # radice = <package>
-        for meta in odoc:
-          if meta.kind != xnElement or localTag(meta.tag) != "metadata": continue
-          for el in meta:
-            if el.kind == xnElement and localTag(el.tag) == "title":
-              let t = el.innerText.strip()
-              if t.len > 0:
-                result = t
-                break
+        result = titleFromOpfDoc(parseXml(opf))
       except CatchableError:
         discard
   finally:
@@ -79,10 +101,112 @@ proc epubTitle(path: string): string =
       discard
 
 # ------------------------------------------------------------------
-# Elenco dei libri nella cartella html_code/
+# Epub NON impacchettato (cartella esterna, output del translator)
 # ------------------------------------------------------------------
-proc listEpubBooks*(dir: string): seq[JsonNode] =
+proc folderTitle(root: string): string =
+  ## Titolo da un epub NON impacchettato: legge META-INF/container.xml per
+  ## trovare l'OPF, poi ne legge i metadati (folder_title in app.py).
+  result = ""
+  let containerPath = root / "META-INF" / "container.xml"
+  if not fileExists(containerPath): return
+  try:
+    let cdoc = parseXml(readFile(containerPath))
+    var opfPath = ""
+    for r in cdoc:
+      for rf in r:
+        if rf.kind == xnElement and localTag(rf.tag) == "rootfile":
+          let fp = rf.attr("full-path")
+          if fp.len > 0: opfPath = fp
+    if opfPath.len == 0: return
+    let opfFull = root / opfPath.replace('\\', '/')
+    if not fileExists(opfFull): return
+    result = titleFromOpfDoc(parseXml(readFile(opfFull)))
+  except CatchableError:
+    discard
+
+proc folderSize(root: string): int64 =
+  ## Dimensione totale (byte) di tutti i file della cartella epub
+  ## (folder_size in app.py).
+  result = 0
+  for p in walkDirRec(root):
+    if fileExists(p):
+      try:
+        result += getFileSize(p)
+      except CatchableError:
+        discard
+
+proc resolveInDir(root, href: string): string =
+  ## Ritorna il path reale di `href` sotto `root`, con match case-insensitive
+  ## (come cmpIgnoreCase usato per le voci dello zip). Ritorna "" se assente
+  ## o se il path risolto esce da `root` (sicurezza: niente traversal).
+  ## Corrisponde a resolve_in_dir in app.py.
+  let clean = href.replace('\\', '/').strip(chars = {'/'})
+  if clean.len == 0 or ".." in clean.split('/'): return ""
+  let rootReal = expandFilename(root)
+  # 1) tentativo diretto (path identico)
+  let direct = root / clean
+  if fileExists(direct):
+    let real = expandFilename(direct)
+    if real == rootReal or real.startsWith(rootReal & DirSep): return real
+    return ""
+  # 2) ricerca case-insensitive nell'albero
+  let norm = clean.toLowerAscii()
+  for p in walkDirRec(root):
+    if not fileExists(p): continue
+    let rel = relativePath(p, root).replace('\\', '/')
+    if rel.toLowerAscii() == norm:
+      let real = expandFilename(p)
+      if real == rootReal or real.startsWith(rootReal & DirSep): return real
+  return ""
+
+proc saveChapterIntoFolder(root, href, content: string): string =
+  ## Salva `content` nel file `href` della cartella esterna (epub NON
+  ## impacchettato), con scrittura atomica (.tmp + move). È l'equivalente
+  ## della modalita' "cartella" di /api/save_chapter in app.py.
+  ## Ritorna "" in caso di successo, altrimenti un messaggio d'errore.
+  if root.len == 0 or not dirExists(root):
+    return "Cartella esterna non configurata"
+  # Validazione href: niente path traversal (..), niente path assoluti
+  # (/, \\, drive letter) — come save_chapter in app.py.
+  let normalized = href.replace('\\', '/').strip(chars = {'/'})
+  if normalized.len == 0 or ".." in normalized.split('/') or
+     href.startsWith("\\") or (href.len > 1 and href[1] == ':'):
+    return "Percorso non valido: " & href
+  let target = resolveInDir(root, href)
+  if target.len == 0:
+    return "Il file " & href & " non e' presente nella cartella"
+  let tmp = target & ".tmp"
+  try:
+    writeFile(tmp, content)
+    moveFile(tmp, target)
+  except CatchableError as e:
+    try:
+      if fileExists(tmp): removeFile(tmp)
+    except CatchableError:
+      discard
+    return "Errore durante la scrittura: " & e.msg
+  return ""
+
+# ------------------------------------------------------------------
+# Elenco dei libri nella cartella html_code/ (e dell'epub da cartella)
+# ------------------------------------------------------------------
+proc listEpubBooks*(dir, folderDir: string): seq[JsonNode] =
   result = @[]
+  # 1) Epub NON impacchettato (output del translator) come primo libro:
+  #    url https://ext/ termina con '/' → epub.js lo apre in modalita'
+  #    DIRECTORY (legge META-INF/container.xml), come /ext/ in Flask.
+  if folderDir.len > 0 and dirExists(folderDir):
+    let label = splitPath(folderDir).tail
+    let t = folderTitle(folderDir)
+    result.add(%*{
+      "name":  label & "/",
+      "title": (if t.len > 0: t else: label & "/"),
+      "url":   "https://" & FOLDER_HOST & "/",
+      "size":  folderSize(folderDir),
+      "type":  "folder"
+    })
+
+  # 2) File .epub in html_code/
   if not dirExists(dir):
     echo "[epub] Cartella non trovata: ", dir
     return
@@ -108,6 +232,7 @@ proc listEpubBooks*(dir: string): seq[JsonNode] =
 # ------------------------------------------------------------------
 var
   gBooksDir: string   # cartella con i file .epub
+  gFolderDir: string  # cartella esterna con l'epub non impacchettato (https://ext/)
 
 proc saveChapterIntoEpub(bookPath, href, content: string): string =
   ## Riscrive il file .epub su disco sostituendo il contenuto della voce
@@ -152,64 +277,6 @@ proc saveChapterIntoEpub(bookPath, href, content: string): string =
   return ""
 
 # ------------------------------------------------------------------
-# Aggiornamento del DOM senza ricaricare l'epub
-# ------------------------------------------------------------------
-# Dopo un salvataggio riuscito NON serve ricaricare il file .epub: questo
-# snippet JS ri-renderizza il capitolo corrente nel viewer usando il contenuto
-# appena salvato (ancora nel textarea dell'editor), patchando l'archive di
-# epub.js in memoria e invalidando le cache di sezione/view.
-const updateChapterDomJs = """
-(function () {
-  if (!window.book || !window.book.archive || !window.rendition) return;
-  var section = window.book.spine ? window.book.spine.get(window.currentHref) : null;
-  if (!section) return;
-  var archPath = (section.url || window.currentHref).replace(/^\//, '');
-  var newText = document.getElementById('codeEditor').value;
-  var archive = window.book.archive;
-  var origRequest = archive.request.bind(archive);
-  // 1) Patch dell'archive in memoria: la richiesta del capitolo salvato
-  //    restituisce il nuovo contenuto invece di rileggerlo dall'epub.
-  archive.request = function (url, type) {
-    var p = window.decodeURIComponent(String(url).substr(1));
-    if (p === archPath) {
-      if (!type) {
-        var m = /\.([a-z0-9]+)$/i.exec(String(url));
-        type = m ? m[1].toLowerCase() : '';
-      }
-      try {
-        return Promise.resolve(archive.handleResponse(newText, type));
-      } catch (e) {
-        return Promise.resolve(newText);
-      }
-    }
-    return origRequest(url, type);
-  };
-  // 2) Invalida le cache della sezione e dei view, cosi' il re-render
-  //    rilegge il contenuto aggiornato.
-  section.contents = undefined;
-  section.document = undefined;
-  section.output = undefined;
-  var views = window.rendition.manager.views.all();
-  for (var i = 0; i < views.length; i++) {
-    if (views[i].section && views[i].section.index === section.index) {
-      views[i].displayed = false;
-    }
-  }
-  // 3) Ri-renderizza il capitolo corrente nel viewer. Se il viewer e'
-  //    nascosto (tab Modifica HTML) il ri-render produrrebbe un iframe 0x0
-  //    e la pagina di lettura resterebbe bianca: in quel caso il ri-render
-  //    viene rimandato al ritorno sulla tab Lettura (showTab legge il flag
-  //    window._epubNeedsRefresh).
-  var viewerEl = document.getElementById('viewer');
-  if (viewerEl && viewerEl.style.display === 'none') {
-    window._epubNeedsRefresh = true;
-  } else {
-    window.rendition.display(window.currentHref);
-  }
-})();
-"""
-
-# ------------------------------------------------------------------
 # Bridge JS <-> Nim
 # ------------------------------------------------------------------
 proc handleBridge(w: Webview; arg: cstring) =
@@ -229,23 +296,25 @@ proc handleBridge(w: Webview; arg: cstring) =
 
     case name
     of "listBooks":
-      let data = %(listEpubBooks(gBooksDir))
+      let data = %(listEpubBooks(gBooksDir, gFolderDir))
       let js = "window._nimCallbacks[" & cbId & "](" & $data & ")"
       w.eval(js)
     of "saveChapter":
       let bookPath = args["book"].getStr()
       let href     = args["href"].getStr()
       let content  = args["content"].getStr()
-      # "silent" = salvataggio in-context dal popover del viewer: il frontend
-      # ha gia' aggiornato il DOM (ri-render con CFI) e ri-patcha l'archive in
-      # memoria da solo, quindi niente MessageBox e niente updateChapterDomJs.
-      let silent   = args.hasKey("silent") and args["silent"].getBool()
-      let err = saveChapterIntoEpub(bookPath, href, content)
-      if err.len == 0 and not silent:
-        # Salvataggio riuscito: niente ricarica dell'epub, aggiorna il DOM
-        # (ri-render del capitolo corrente) e verifica esito con MessageBox.
-        w.eval(updateChapterDomJs)
-        discard MessageBox(0, "Saving succeeded", "Epub Editor", MB_OK)
+      # "silent" (opzionale, usato dal popover in-context) è accettato per
+      # compatibilità col frontend condiviso ma non ha effetti lato backend:
+      # come in app.py, il ri-render del viewer è sempre client-side
+      # (updateChapterDom nel frontend), quindi niente MessageBox.
+      discard args.hasKey("silent") and args["silent"].getBool()
+      let err =
+        if bookPath.strip(chars = {'/'}) == FOLDER_BOOK_KEY or
+           bookPath == "https://" & FOLDER_HOST & "/":
+          # Modalita' cartella (epub non impacchettato): scrittura su disco
+          saveChapterIntoFolder(gFolderDir, href, content)
+        else:
+          saveChapterIntoEpub(bookPath, href, content)
       let res = %*{"ok": err.len == 0, "error": err}
       let js = "window._nimCallbacks[" & cbId & "](" & $res & ")"
       w.eval(js)
@@ -289,8 +358,17 @@ when isMainModule:
   let exeDir = getAppDir()
   gBooksDir = exeDir / "html_code"
 
+  # Epub NON impacchettato (output del translator): se la cartella esiste la
+  # mappiamo su https://ext/ (in app.py: --book-dir).
+  gFolderDir = FOLDER_BOOK_DIR
+  if dirExists(gFolderDir):
+    echo "[epub] Epub da cartella: ", gFolderDir, "  (su https://", FOLDER_HOST, "/)"
+  else:
+    echo "[epub] AVVISO: cartella esterna non trovata, ignorata: ", gFolderDir
+    gFolderDir = ""
+
   echo "[epub] Cartella libri: ", gBooksDir
-  let books = listEpubBooks(gBooksDir)
+  let books = listEpubBooks(gBooksDir, gFolderDir)
   echo "[epub] Trovati ", books.len, " libri"
 
   # Crea la finestra
@@ -309,6 +387,14 @@ when isMainModule:
   let hr = w.mio_registerVirtualHost(VHOST, gBooksDir, allow = true)
   if hr != S_OK:
     echo "[epub] AVVISO: registro virtual host fallito (", $hr, ")"
+
+  # Mappa https://ext/ -> cartella dell'epub non impacchettato: i file vengono
+  # riletti dal disco a ogni richiesta (le traduzioni salvate si vedono subito,
+  # senza ricompilare l'epub).
+  if gFolderDir.len > 0:
+    let hr2 = w.mio_registerVirtualHost(FOLDER_HOST, gFolderDir, allow = true)
+    if hr2 != S_OK:
+      echo "[epub] AVVISO: registro virtual host ", FOLDER_HOST, " fallito (", $hr2, ")"
 
   # Carica il frontend dalla cartella html_code via virtual host
   w.navigate("https://" & VHOST & "/index.html")

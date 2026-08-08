@@ -37,13 +37,31 @@ The flow is the same as Flask, but without a server:
 2. **Titles** – for each book Nim opens the ZIP with **zippy**, reads
    `META-INF/container.xml` to find the OPF path, then extracts `<dc:title>`
    (equivalent of the `epub_title()` function in `app.py`).
-3. **Virtual host** – `mio_registerVirtualHost("appassets", html_code)` maps
-   `https://appassets/...` to the files in the `html_code/` folder.
+3. **Virtual hosts** – `mio_registerVirtualHost` maps:
+   - `https://appassets/` → the `html_code/` folder (frontend + `.epub` books);
+   - `https://ext/` → the **unpacked EPUB folder** (translator output,
+     `META-INF/` + `OEBPS/`), served from disk on every request.
 4. **Navigation** – the window loads `https://appassets/index.html`.
 5. **Library** – `index.html` calls the bridge `api.listBooks()` → Nim replies
-   with `[{name, title, url, size}, ...]`.
+   with `[{name, title, url, size, type?}, ...]`. The unpacked EPUB folder
+   appears **first**, as a `type: "folder"` book (`url: "https://ext/"`).
 6. **Reading** – `epub.js` opens the book via `https://appassets/<name>.epub`
-   and **unzips it by itself** with JSZip (the original JS code is unchanged).
+   and **unzips it by itself** with JSZip; the folder book is opened in
+   **directory mode** (URL ends with `/`), same as `/ext/` in Flask.
+
+### Unpacked EPUB folder (translator output)
+
+Aligned with `app.py`'s `--book-dir` mode: `FOLDER_BOOK_DIR`
+(`C:\Users\pr30565\Desktop\python\translator\target`) is served on
+`https://ext/` and appears as the first book in the Library. Because files are
+read from disk on every request (the frontend adds a `t=` cache-buster), the
+translations saved by the translator are visible immediately, without
+rebuilding the EPUB. The **⟳ Ricarica** button re-reads the current chapter
+from disk; the **HTML editor** and the in-context popover save directly into
+the folder file (`saveChapter` → `saveChapterIntoFolder`, case-insensitive
+match + atomic `.tmp`/move, same as Flask). Chapters rendered from the folder
+are rewritten client-side to a single CSS bundle (equivalent of
+`css_bundle`/`rewrite_xhtml_css_links` in `app.py`).
 
 ### JS ↔ Nim bridge
 
@@ -107,18 +125,28 @@ read from the OPF metadata; if it cannot be read, the file name is used.
 ## Code maintenance
 
 ### `epub_app.nim`
-- **`listEpubBooks(dir)`** – scans the folder and returns the books as JSON.
-  Edit here if you want to change the folder, sorting, or the fields returned
-  to the frontend.
-- **`epubTitle(path)`** – extracts the title from the OPF. Change it here if
-  some books don't show the correct title (e.g. EPUBs with a particular
-  `container.xml` structure).
-- **`handleBridge`** – handles commands from JS. Add new `of "command"` cases
-  for new features (e.g. extracting a specific file from the ZIP via zippy).
+- **`listEpubBooks(dir, folderDir)`** – scans the folder and returns the books
+  as JSON (first the unpacked folder book, then the `.epub` files). Edit here
+  if you want to change the folder, sorting, or the fields returned to the
+  frontend.
+- **`epubTitle(path)`** – extracts the title from the OPF of a `.epub`.
+- **`folderTitle(root)` / `folderSize(root)`** – title (from `container.xml`
+  + OPF) and total size of an unpacked folder book (as in `app.py`).
+- **`resolveInDir(root, href)`** – real path of `href` under `root` with
+  case-insensitive match and path-traversal protection.
+- **`saveChapterIntoEpub` / `saveChapterIntoFolder`** – persist a modified
+  chapter into a `.epub` (zippy rewrite) or into the unpacked folder file.
+- **`handleBridge`** – handles commands from JS (`listBooks`, `saveChapter`,
+  `setZoom`). The `saveChapter` re-render is **client-side** (as in Flask), no
+  MessageBox.
 
 ### `html_code/index.html`
-- It is the **same** as the Flask app, with the addition of the
-  `window.api.listBooks` bridge instead of the `GET /api/books` fetch.
+- It is the **same** as the Flask app (`reader/static/index.html`), adapted to
+  the Nim bridge (`api.listBooks`/`api.saveChapter`/`api.setZoom`) and with
+  the browser **zoom** buttons (WebView2) added. All the Python features are
+  reused: folder book (`isFolderBook`, `normalizeExtPath`, archive shim),
+  client-side CSS bundle, ⟳ Ricarica, swipe navigation, draggable in-context
+  editor, client-side re-render after save.
 - If you modify the frontend, refer to `reader/static/` for the original.
 
 ### `webview2_nim` module

@@ -6,7 +6,8 @@
   <title>Lettore EPUB</title>
   <link rel="icon" href="data:,">
   <!-- JSZip va caricato PRIMA di epub.js: il build lo tratta come dipendenza esterna.
-       Path relativi: in standalone WebView2 i file vivono in html_code/ (niente server). -->
+       Path relativi: in standalone WebView2 i file vivono in html_code/ (niente server,
+       virtual host https://appassets/). -->
   <script src="jszip.min.js"></script>
   <script src="epub.js"></script>
   <style>
@@ -291,32 +292,54 @@
       display: none;
       position: fixed;
       z-index: 1000;
-      width: 380px;
-      max-width: 90vw;
-      min-width: 280px;
-      min-height: 160px;
+      width: 500px;
+      max-width: 92vw;
+      min-width: 360px;
+      min-height: 240px;
       overflow: hidden;
       background: #262626;
       border: 1px solid #666;
       border-radius: 8px;
       box-shadow: 0 6px 24px rgba(0,0,0,.55);
       flex-direction: column;
-      font-size: 13px;
+      font-size: 15px;
     }
     #inlineEditor.open { display: flex; }
-    .ieHead {
+    /* Maniglia per spostare il popover (comodo su touch, senza mouse) */
+    #ieHandle {
+      flex-shrink: 0;
+      height: 30px;
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 6px 10px;
+      justify-content: center;
       background: #2f2f2f;
+      color: #9a9a9a;
+      font-size: 13px;
+      letter-spacing: 5px;
+      cursor: grab;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;   /* niente pan/scroll: il gesto sposta il popover */
       border-bottom: 1px solid #555;
       border-radius: 8px 8px 0 0;
     }
+    #ieHandle:active { cursor: grabbing; color: #ddd; }
+    .ieHead {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: #2f2f2f;
+      border-bottom: 1px solid #555;
+      border-radius: 0;
+      touch-action: none;
+      cursor: grab;
+    }
+    .ieHead:active { cursor: grabbing; }
     .ieHead span {
       flex: 1;
       font-family: Consolas, monospace;
-      font-size: 12px;
+      font-size: 15px;
       color: #bbb;
       overflow: hidden;
       white-space: nowrap;
@@ -327,48 +350,59 @@
       border: none;
       color: #ccc;
       cursor: pointer;
-      font-size: 14px;
-      padding: 0 2px;
+      font-size: 17px;
+      padding: 0 4px;
     }
     .ieHead button:hover { color: #fff; }
     #ieCode {
       width: 100%;
       flex: 1 1 auto;
-      min-height: 90px;
-      max-height: 45vh;
+      min-height: 160px;
+      max-height: 55vh;
       border: none;
       outline: none;
       resize: none;
-      padding: 8px;
+      padding: 12px;
       background: #1e1e1e;
       color: #dcdcdc;
       font-family: Consolas, 'Courier New', monospace;
-      font-size: 12px;
-      line-height: 1.45;
+      font-size: 15px;
+      line-height: 1.6;
       tab-size: 2;
       white-space: pre-wrap;   /* testo a capo invece dello scroll orizzontale */
       overflow-wrap: break-word;
       word-break: break-word;
       overflow: auto;
     }
-    /* Grip per il ridimensionamento manuale (in basso a destra) */
+    /* Grip per il ridimensionamento manuale (in basso a destra): zona
+       generosa per il touch, touch-action: none così il gesto non viene
+       interpretato dal browser come scroll/pan */
     #ieGrip {
       position: absolute;
       right: 0;
       bottom: 0;
-      width: 18px;
-      height: 18px;
+      width: 48px;
+      height: 48px;
       cursor: nwse-resize;
-      background: linear-gradient(135deg, transparent 50%, #7a7a7a 50%);
-      border-bottom-right-radius: 7px;
+      touch-action: none;
       user-select: none;
+      -webkit-user-select: none;
+      border-bottom-right-radius: 7px;
+      background:
+        linear-gradient(135deg, transparent 50%, #bdbdbd 50%) 24px 24px / 36px 36px no-repeat,
+        linear-gradient(135deg, transparent 50%, #7a7a7a 50%) 12px 12px / 36px 36px no-repeat;
     }
-    #ieGrip:hover { background: linear-gradient(135deg, transparent 50%, #a0a0a0 50%); }
+    #ieGrip:hover,
+    #ieGrip:active {
+      background:
+        linear-gradient(135deg, transparent 50%, #e0e0e0 50%) 24px 24px / 36px 36px no-repeat,
+        linear-gradient(135deg, transparent 50%, #a0a0a0 50%) 12px 12px / 36px 36px no-repeat;
+    }
     .ieFoot {
       display: flex;
       justify-content: flex-end;
-      gap: 8px;
-      padding: 8px 10px;
+      gap: 10px;
+      padding: 10px 14px;
       border-top: 1px solid #555;
     }
     .ieFoot button {
@@ -376,9 +410,9 @@
       color: #fff;
       border: none;
       border-radius: 4px;
-      padding: 6px 14px;
+      padding: 8px 18px;
       cursor: pointer;
-      font-size: 13px;
+      font-size: 15px;
     }
     .ieFoot button:hover { background: #666; }
     .ieFoot button:disabled { opacity: .4; cursor: default; }
@@ -408,6 +442,7 @@
     <button id="zoomReset" title="Reimposta zoom al 100%" disabled>100%</button>
     <button id="zoomIn" title="Aumenta zoom (contenuto di lettura)" disabled>A+</button>
     <button id="spreadToggle" disabled>Una pagina</button>
+    <button id="reloadBtn" title="Ricarica il capitolo corrente dal disco (libri da cartella: mostra la traduzione salvata dal translator)" disabled>⟳ Ricarica</button>
     <select id="widthSelect" title="Larghezza massima pagina">
     <option value="30">30%</option>
     <option value="35">35%</option>
@@ -447,6 +482,7 @@
 
   <!-- Popover fluttuante: editing in-context del paragrafo cliccato -->
   <div id="inlineEditor" aria-hidden="true">
+    <div id="ieHandle" title="Trascina per spostare">☰ ☰ ☰</div>
     <div class="ieHead">
       <span id="ieTitle">Modifica paragrafo</span>
       <button id="ieClose" title="Chiudi (Esc)">✕</button>
@@ -489,6 +525,11 @@
     var bookListEl = document.getElementById("bookList");
     var librarySidebar = document.getElementById("librarySidebar");
     // --- Bridge Nim ⟷ JavaScript (webview2 / miowv) ---
+    // listBooks() → elenco: prima l'epub da cartella su https://ext/ (output
+    //   del translator), poi i .epub in html_code/
+    // saveChapter(payload) → salva la voce modificata nell'epub, o nel file
+    //   della cartella esterna; "silent" è accettato per compatibilità con il
+    //   frontend condiviso, non ha effetti: il ri-render è client-side
     window._nimCallbacks = {};
     window._nimCallbackId = 0;
     window.api = {};
@@ -519,11 +560,14 @@
       };
     }
 
-    // listBooks() → elenco .epub (sostituisce GET /api/books di Flask)
     api.listBooks = createBridgeFn("epub", "listBooks");
-    // saveChapter() → salva il codice HTML modificato dentro l'epub
     api.saveChapter = createBridgeFn("epub", "saveChapter");
     api.setZoom = createBridgeFn("epub", "setZoom");
+
+    // Alias identici a quelli del frontend Flask, così il resto del codice
+    // (libreria, salvataggi) resta identico alla versione Python.
+    function apiListBooks() { return api.listBooks(null); }
+    function apiSaveChapter(payload) { return api.saveChapter(payload); }
 
     function setStatus(msg) {
       statusEl.textContent = msg;
@@ -562,8 +606,7 @@
     }
 
     function loadBookList() {
-      // Backend Nim (bridge) al posto di Flask GET /api/books
-      api.listBooks(null)
+      apiListBooks()
         .then(function (books) {
           bookListEl.innerHTML = "";
           if (!books || !books.length) {
@@ -609,14 +652,165 @@
     }
 
     // --- Lettura ---
+    // Un libro "da cartella" è l'epub NON impacchettato servito su /ext/
+    // (es. l'output del translator): i file vengono riletti dal disco a ogni
+    // richiesta, così le traduzioni salvate si vedono in tempo reale.
+    function isFolderBook() {
+      if (!currentBookUrl) return false;
+      // Flask: URL inizia con "/ext/" (server). Standalone Nim: virtual host
+      // https://ext/ (la cartella del translator mappata da miowv).
+      if (currentBookUrl.indexOf("/ext/") === 0) return true;
+      try {
+        var a = document.createElement("a");
+        a.href = currentBookUrl;
+        return a.hostname === "ext";
+      } catch (e) { return false; }
+    }
+
+    // Chiave libro per il salvataggio: per il libro-cartella il backend (Nim
+    // e Flask) riconosce la chiave "ext"; per i .epub il basename.
+    function bookKey() {
+      if (isFolderBook()) return "ext";
+      return currentBookUrl.replace(/^\//, "");
+    }
+
+    // Percorso della voce dentro l'epub (zip: voce dell'archivio; cartella:
+    // percorso relativo alla radice del pacchetto, senza il prefisso /ext/).
+    function chapterArchPath(section, href) {
+      return normalizeExtPath((section && section.url) || href);
+    }
+
+    // epub.js per i libri da cartella usa URL ASSOLUTI per section.url
+    // (es. "http://host/ext/OEBPS/x.xhtml"): li normalizza nel percorso
+    // relativo al pacchetto ("OEBPS/x.xhtml") accettando anche input
+    // relativi o già senza prefisso.
+    function normalizeExtPath(p) {
+      p = String(p || "");
+      p = p.replace(/^https?:\/\/[^/]+/i, ""); // toglie l'origine
+      p = p.replace(/^\//, "");                 // toglie lo slash iniziale
+      if (isFolderBook()) {
+        var base = currentBookUrl.replace(/^\//, ""); // es. "ext/"
+        if (base && p.indexOf(base) === 0) p = p.slice(base.length);
+      }
+      return p;
+    }
+
+    // Per i libri da cartella epub.js NON crea l'archive (legge via HTTP):
+    // installiamo uno shim così l'editor HTML, i patch e buildEditedChapter
+    // funzionano come per i .epub. Le richieste escono dalla cache-buster e
+    // dal Cache-Control: no-store del server, quindi leggono SEMPRE dal disco.
+    function installArchiveShim() {
+      if (!book || book.archive) return;
+      function shimType(url) {
+        var m = /\.([a-z0-9]+)(\?.*)?$/i.exec(String(url));
+        return m ? m[1].toLowerCase() : "";
+      }
+      function shimHandle(text, type) {
+        if (type === "json") return JSON.parse(text);
+        if (type === "xhtml") return new DOMParser().parseFromString(text, "application/xhtml+xml");
+        if (type === "html" || type === "htm") return new DOMParser().parseFromString(text, "text/html");
+        if (type === "xml" || type === "opf" || type === "ncx" || type === "svg")
+          return new DOMParser().parseFromString(text, "text/xml");
+        return text;
+      }
+      // Legge SEMPRE dal disco: cache-buster (t=) + Cache-Control: no-store.
+      // In Flask è il server a mandare no-store; qui il virtual host WebView2
+      // può cacheare i file, quindi la t= unica forza la rilettura a ogni
+      // richiesta (le traduzioni salvate dal translator si vedono subito).
+      function fetchFresh(path) {
+        var sep = path.indexOf("?") >= 0 ? "&" : "?";
+        var reqUrl = currentBookUrl + path + sep + "raw=1&t=" + Date.now();
+        return fetch(reqUrl, { cache: "no-store" }).then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.text();
+        });
+      }
+      // Equivalente client-side di css_bundle() + rewrite_xhtml_css_links di
+      // app.py: toglie i ~100 <link ...styles/*.css> del capitolo e inietta UN
+      // solo link a un bundle.css costruito concatenando tutti i css della
+      // cartella styles/ (stessa directory = stessi path relativi per i font).
+      // Il bundle è un Blob URL nuovo a ogni render: URL unico, quindi ignora
+      // la cache del virtual host (i css rigenerati si vedono subito).
+      function rewriteCssToBundle(text, chapterPath) {
+        var dir = chapterPath.replace(/[^/]*$/, "");
+        var links = text.match(/<link[^>]*href=["'][^"']*\.css["'][^>]*>/gi) || [];
+        var cssPaths = [];
+        links.forEach(function (l) {
+          var m = /href=["']([^"']*\.css)["']/i.exec(l);
+          if (m && /(^|\/)styles\/[^/]*\.css$/i.test(m[1].split("?")[0])) {
+            cssPaths.push(m[1]);
+          }
+        });
+        if (!cssPaths.length) return text;
+        return Promise.all(cssPaths.map(function (p) {
+          var abs = p.charAt(0) === "/" ? p.slice(1) : dir + p;
+          return fetchFresh(abs).catch(function () { return ""; });
+        })).then(function (parts) {
+          var blob = new Blob([parts.join("\n")], { type: "text/css" });
+          var url = URL.createObjectURL(blob);
+          var out = text.replace(/<link[^>]*href=["'][^"']*\.css["'][^>]*>/gi, "");
+          return out.replace(/(<head[^>]*>)/i,
+            "$1\n<link href=\"" + url + "\" rel=\"stylesheet\" type=\"text/css\"/>");
+        });
+      }
+      // L'archive shim serve l'EDITOR (richieste INTATTE: loadEditorContent,
+      // patchArchiveForChapter, buildEditedChapter), come l'archive JSZip dei
+      // .epub: con raw=1 il capitolo non viene mai riscritto col bundle.
+      book.archive = {
+        request: function (url, type) {
+          return fetchFresh(normalizeExtPath(url)).then(function (text) {
+            return shimHandle(text, type || shimType(url));
+          });
+        },
+        // L'archive shim non possiede risorse reali (niente zip/urlCache),
+        // quindi il destroy e' un no-op. MA il metodo DEVE esistere:
+        // Book.destroy() chiama archive.destroy() e senza questo metodo il
+        // destroy del libro da cartella fallisce a meta' (spine gia' azzerato,
+        // resto intatto): la variabile globale book resterebbe agganciata a
+        // un libro mezzo distrutto, e il destroy successivo crasha su
+        // spine.spineItems.forEach (spineItems ormai undefined).
+        destroy: function () {}
+      };
+      // book.request è quello che epub.js usa per il RENDERING (Book.load →
+      // manager → section.load): gli XHTML vengono riscritti col bundle css
+      // (come fa Flask a livello HTTP) e parsati in Document come utils_request
+      // (il tipo viene dedotto dall'estensione). Le risorse non-HTML passano
+      // intatte. Così ogni render rilegge dal disco anche i css rigenerati.
+      book.request = function (url, type) {
+        var path = normalizeExtPath(url);
+        return fetchFresh(path).then(function (text) {
+          if (/\.(xhtml|html|htm)$/i.test(path.split("?")[0])) {
+            return rewriteCssToBundle(text, path);
+          }
+          return text;
+        }).then(function (text) {
+          return shimHandle(text, type || shimType(url));
+        });
+      };
+    }
+
     function openBook(url) {
       closeInlineEditor(); // il popover in-context appartiene al libro precedente
-      if (book) book.destroy();
+      if (book) {
+        try {
+          book.destroy();
+        } catch (err) {
+          // Il destroy e' fallito a meta' (es. libro da cartella in stato
+          // anomalo): book viene comunque sostituito qui sotto da ePub(url),
+          // cosi' un oggetto mezzo distrutto non puo' essere distrutto una
+          // seconda volta (che farebbe crashare spine.each su spineItems
+          // ormai undefined).
+        }
+      }
       currentBookUrl = url.split("?")[0]; // toglie l'eventuale cache-buster
       currentHref = null;
       setStatus("Apertura del libro…");
 
       book = ePub(url);
+      // Libro da cartella: shim dell'archive (editor HTML, patch, ricarica)
+      // e pulsante "Ricarica" abilitato.
+      if (isFolderBook()) installArchiveShim();
+      document.getElementById("reloadBtn").disabled = !isFolderBook();
       rendition = book.renderTo("viewer", {
         width: "100%",
         height: "100%",
@@ -630,6 +824,37 @@
         if (contents) contents.forEach(function (c) {
           if (c && c.document) bindInlineEdit(c); // prepara il popover in-context al click (invisibile)
         });
+      });
+
+      // Swipe orizzontale per girare pagina. Gli eventi touch arrivano dai
+      // documenti interni degli iframe tramite passEvents di epub.js, quindi
+      // lo swipe funziona anche sopra al testo. Chiama la stessa navigate()
+      // dei bottoni prev/next (stessa guardia anti doppio-gesto): i bottoni
+      // continuano a funzionare e i gesti lenti (selezione testo) o verticali
+      // vengono ignorati. Nota: epub.js riceve questi eventi come "passive",
+      // quindi non facciamo preventDefault: dopo uno swipe vero Chrome non
+      // genera comunque il click, quindi non si apre l'editor in-context.
+      var swipeStartX = null, swipeStartY = null, swipeStartT = 0;
+      rendition.on("touchstart", function (e) {
+        if (!e.touches || e.touches.length !== 1) { swipeStartX = null; return; }
+        swipeStartX = e.touches[0].clientX;
+        swipeStartY = e.touches[0].clientY;
+        swipeStartT = performance.now();
+      });
+      rendition.on("touchend", function (e) {
+        if (swipeStartX == null) return;
+        var t = e.changedTouches && e.changedTouches[0];
+        if (!t) { swipeStartX = null; return; }
+        var dx = t.clientX - swipeStartX;
+        var dy = t.clientY - swipeStartY;
+        var dt = performance.now() - swipeStartT;
+        swipeStartX = null;
+        if (dt > 800 || dt < 30) return;              // gesto lento (selezione testo) o troppo corto
+        if (Math.abs(dx) < 60) return;                // distanza minima per considerarlo uno swipe
+        if (Math.abs(dx) < Math.abs(dy) * 1.5) return; // deve essere nettamente orizzontale
+        // Stessa logica dei bottoni: rispetta i bordi del libro
+        if (dx < 0 && !document.getElementById("next").disabled) navigate(1);
+        else if (dx > 0 && !document.getElementById("prev").disabled) navigate(-1);
       });
 
       rendition.display().then(function () {
@@ -732,6 +957,44 @@
     document.getElementById("zoomReset").addEventListener("click", function () { applyZoom(1); });
     document.getElementById("zoomIn").addEventListener("click", function () { applyZoom(readerZoom + ZOOM_STEP); });
 
+    // Ricarica il capitolo corrente dal disco (solo libri da cartella): la
+    // traduzione salvata dal translator si vede senza riaprire il libro.
+    function reloadCurrentChapter() {
+      if (!book || !rendition || !currentHref) {
+        setStatus("Nessun capitolo da ricaricare.");
+        return;
+      }
+      var section = book.spine ? book.spine.get(currentHref) : null;
+      if (!section) { setStatus("Nessun capitolo da ricaricare."); return; }
+      var archPath = chapterArchPath(section, currentHref);
+      var fetchPath = normalizeExtPath(currentHref.split("#")[0]); // relativo al pacchetto
+      var reqUrl = currentBookUrl + fetchPath + "?raw=1&t=" + Date.now();
+      setStatus("Ricaricamento del capitolo…");
+      fetch(reqUrl, { cache: "no-store" }).then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      }).then(function (text) {
+        // aggiorna l'archive-shim (e i suoi patch) e la cache della sezione
+        if (book.archive) patchArchiveForChapter(archPath, text);
+        if (section) {
+          section.contents = undefined;
+          section.document = undefined;
+          section.output = undefined;
+        }
+        // se l'editor HTML è aperto, mostra il testo appena letto
+        var editorPanel = document.getElementById("editorPanel");
+        if (getComputedStyle(editorPanel).display !== "none") {
+          document.getElementById("codeEditor").value = text;
+        }
+        rendition.clear();
+        rendition.display(currentHref).catch(function () {});
+        setStatus("Capitolo ricaricato dal disco ✓");
+      }).catch(function (err) {
+        setStatus("Errore nel ricaricamento: " + (err && err.message ? err.message : err));
+      });
+    }
+    document.getElementById("reloadBtn").addEventListener("click", reloadCurrentChapter);
+
     // Sidebar: toggle on/off del browser del pacchetto EPUB
     document.getElementById("filesToggle").addEventListener("click", function () {
       var sb = document.getElementById("sidebar");
@@ -774,6 +1037,9 @@
       function addGroup(label, icon, match) {
         var groupItems = items.filter(function (it) { return match(it.type); });
         if (!groupItems.length) return;
+        groupItems.sort(function (a, b) {
+          return a.href.localeCompare(b.href);
+        });
         var group = document.createElement("div");
         group.className = "fileGroup";
         var h = document.createElement("h4");
@@ -884,8 +1150,8 @@
         viewer.style.display = "block";
         if (rendition) {
           // Se un salvataggio e' avvenuto col viewer nascosto, il ri-render
-          // e' stato rimandato (flag impostato da updateChapterDomJs nel
-          // bridge): forza un refresh pulito invece del resize, che sarebbe
+          // e' stato rimandato (flag impostato da updateChapterDom): forza un
+          // refresh pulito invece del resize, che sarebbe
           // no-op con dimensioni invariate e lascerebbe l'iframe 0x0
           // (pagina bianca).
           if (window._epubNeedsRefresh) {
@@ -946,42 +1212,98 @@
       inlineEditor.classList.add("open");
       positionInlineEditor(inlineCtx.px, inlineCtx.py); // ri-clampa con dimensioni reali
       ieCode.focus();
-      ieCode.select();
+      // Cursore alla fine del testo invece della selezione completa:
+      // così si può correggere l'ultimo carattere o digitare subito.
+      ieCode.setSelectionRange(ieCode.value.length, ieCode.value.length);
       setStatus("");
     });
     document.getElementById("reloadEditor").addEventListener("click", loadEditorContent);
 
     // Salva il codice HTML modificato dentro il file .epub e aggiorna il DOM
-    // (il bridge Nim ri-renderizza il capitolo e mostra la MessageBox di conferma,
-    // quindi non serve ricaricare l'epub)
+    // senza ricaricare l'epub: il backend Flask salva su disco, poi
+    // updateChapterDom() ri-renderizza il capitolo corrente (o rimanda il
+    // ri-render alla tab Lettura se il viewer è nascosto).
     document.getElementById("saveBtn").addEventListener("click", function () {
       if (!book || !currentHref) return;
       var btn = document.getElementById("saveBtn");
       var content = document.getElementById("codeEditor").value;
-      // Percorso assoluto dentro l'epub (quello che matcha le voci dello zip)
+      // Percorso assoluto dentro l'epub (quello che matcha le voci dello zip,
+      // o il percorso relativo al pacchetto per i libri da cartella)
       var section = book.spine ? book.spine.get(currentHref) : null;
-      var archPath = section && section.url
-        ? section.url.replace(/^\//, "")
-        : currentHref.replace(/^\//, "");
+      var archPath = chapterArchPath(section, currentHref);
       btn.disabled = true;
-      api.saveChapter({
-        book: currentBookUrl.replace(/^\//, ""),
+      apiSaveChapter({
+        book: bookKey(),
         href: archPath,
         content: content
       }).then(function (res) {
         btn.disabled = false;
         if (res && res.ok) {
-          setStatus("Modifiche salvate nel file .epub ✓");
-          // Niente ricarica dell'epub: il bridge Nim ha gia' aggiornato il DOM
-          // (ri-render del capitolo corrente) e mostrato la MessageBox.
+          setStatus(isFolderBook()
+            ? "Modifiche salvate nella cartella ✓"
+            : "Modifiche salvate nel file .epub ✓");
+          updateChapterDom(); // ri-render del capitolo corrente
         } else {
           setStatus("Errore nel salvataggio: " + ((res && res.error) || "sconosciuto"));
         }
       }).catch(function (err) {
         btn.disabled = false;
-        setStatus("Errore del bridge: " + err);
+        setStatus("Errore del server: " + err);
       });
     });
+
+    // Ri-renderizza il capitolo corrente nel viewer senza ricaricare l'epub:
+    // patcha l'archive di epub.js in memoria (la richiesta del capitolo salvato
+    // restituisce il nuovo contenuto) e invalida le cache di sezione/view.
+    // (equivalente di updateChapterDomJs in epub_app.nim, ma eseguito lato client)
+    function updateChapterDom() {
+      if (!book || !book.archive || !rendition) return;
+      var section = book.spine ? book.spine.get(currentHref) : null;
+      if (!section) return;
+      var archPath = chapterArchPath(section, currentHref);
+      var newText = document.getElementById('codeEditor').value;
+      var archive = book.archive;
+      var origRequest = archive.request.bind(archive);
+      // 1) Patch dell'archive in memoria: la richiesta del capitolo salvato
+      //    restituisce il nuovo contenuto invece di rileggerlo dall'epub.
+      archive.request = function (url, type) {
+        var p = window.decodeURIComponent(String(url).substr(1));
+        if (p === archPath) {
+          if (!type) {
+            var m = /\.([a-z0-9]+)$/i.exec(String(url));
+            type = m ? m[1].toLowerCase() : '';
+          }
+          try {
+            return Promise.resolve(archive.handleResponse(newText, type));
+          } catch (e) {
+            return Promise.resolve(newText);
+          }
+        }
+        return origRequest(url, type);
+      };
+      // 2) Invalida le cache della sezione e dei view, cosi' il re-render
+      //    rilegge il contenuto aggiornato.
+      section.contents = undefined;
+      section.document = undefined;
+      section.output = undefined;
+      var views = rendition.manager.views.all();
+      for (var i = 0; i < views.length; i++) {
+        if (views[i].section && views[i].section.index === section.index) {
+          views[i].displayed = false;
+        }
+      }
+      // 3) Ri-renderizza il capitolo corrente nel viewer. Se il viewer e'
+      //    nascosto (tab Modifica HTML) il ri-render produrrebbe un iframe 0x0
+      //    e la pagina di lettura resterebbe bianca: in quel caso il ri-render
+      //    viene rimandato al ritorno sulla tab Lettura (showTab legge il flag
+      //    window._epubNeedsRefresh).
+      var viewerEl = document.getElementById('viewer');
+      if (viewerEl && viewerEl.style.display === 'none') {
+        window._epubNeedsRefresh = true;
+      } else {
+        rendition.display(currentHref);
+      }
+    }
 
     // ==================================================================
     // Editing in-context: clic su un paragrafo nel rendering epub.js
@@ -1087,7 +1409,7 @@
         element: el,
         section: section,
         href: section.href,
-        archPath: (section.url || section.href || "").replace(/^\//, ""),
+        archPath: chapterArchPath(section, section.href),
         cfi: cfi,
         px: px,
         py: py
@@ -1103,7 +1425,9 @@
         inlineEditor.setAttribute("aria-hidden", "false");
         inlineEditor.classList.add("open");
         ieCode.focus();
-        ieCode.select();
+        // Cursore alla fine del testo invece della selezione completa:
+        // così si può correggere l'ultimo carattere o digitare subito.
+        ieCode.setSelectionRange(ieCode.value.length, ieCode.value.length);
       }
     }
 
@@ -1128,8 +1452,8 @@
     }
 
     // Patch dell'archive in memoria: per quel path il prossimo request
-    // restituisce il testo aggiornato (stessa tecnica di updateChapterDomJs
-    // nel bridge Nim) cosi' il ri-render non rilegge il vecchio contenuto.
+    // restituisce il testo aggiornato (stessa tecnica di updateChapterDom)
+    // cosi' il ri-render non rilegge il vecchio contenuto.
     function patchArchiveForChapter(archPath, newText) {
       if (!book || !book.archive) return;
       var archive = book.archive;
@@ -1255,9 +1579,9 @@
       ieSave.disabled = true;
       buildEditedChapter(ctx, newHtml)
         .then(function (newChapter) {
-          // Persistenza sul disco (.epub) senza MessageBox / re-render automatico
-          return api.saveChapter({
-            book: currentBookUrl.replace(/^\//, ""),
+          // Persistenza sul disco (.epub o cartella) senza MessageBox / re-render automatico
+          return apiSaveChapter({
+            book: bookKey(),
             href: ctx.archPath,
             content: newChapter,
             silent: true
@@ -1302,28 +1626,38 @@
     ieCancel.addEventListener("click", closeInlineEditor);
     ieClose.addEventListener("click", closeInlineEditor);
 
-    // Trascina il popover dalla barra del titolo (Pointer Events + capture:
-    // gli eventi continuano ad arrivare anche se il puntatore passa sopra
-    // l'iframe del viewer)
-    inlineEditor.querySelector(".ieHead").addEventListener("pointerdown", function (e) {
-      if (e.target && e.target.closest && e.target.closest("button")) return;
-      e.preventDefault();
-      var head = this;
-      try { head.setPointerCapture(e.pointerId); } catch (err) {}
-      var startX = e.clientX, startY = e.clientY;
-      var origLeft = parseFloat(inlineEditor.style.left) || 0;
-      var origTop = parseFloat(inlineEditor.style.top) || 0;
-      function onMove(ev) {
-        inlineEditor.style.left = (origLeft + ev.clientX - startX) + "px";
-        inlineEditor.style.top = (origTop + ev.clientY - startY) + "px";
-      }
-      function onUp() {
-        head.removeEventListener("pointermove", onMove);
-        head.removeEventListener("pointerup", onUp);
-      }
-      head.addEventListener("pointermove", onMove);
-      head.addEventListener("pointerup", onUp);
-    });
+    // Trascina il popover dalla maniglia (o dalla barra del titolo) con
+    // Pointer Events + capture: gli eventi continuano ad arrivare anche se il
+    // puntatore passa sopra l'iframe del viewer. touch-action: none nel CSS
+    // fa sì che su touch il gesto non venga interpretato come scroll/pan.
+    function makePopoverDraggable(handleEl) {
+      handleEl.addEventListener("pointerdown", function (e) {
+        if (e.target && e.target.closest && e.target.closest("button")) return;
+        e.preventDefault();
+        var h = this;
+        try { h.setPointerCapture(e.pointerId); } catch (err) {}
+        var startX = e.clientX, startY = e.clientY;
+        var origLeft = parseFloat(inlineEditor.style.left) || 0;
+        var origTop = parseFloat(inlineEditor.style.top) || 0;
+        function onMove(ev) {
+          // mantiene il popover sempre almeno in parte visibile
+          var nx = origLeft + ev.clientX - startX;
+          var ny = origTop + ev.clientY - startY;
+          nx = Math.max(-inlineEditor.offsetWidth + 120, Math.min(nx, window.innerWidth - 120));
+          ny = Math.max(0, Math.min(ny, window.innerHeight - 60));
+          inlineEditor.style.left = nx + "px";
+          inlineEditor.style.top = ny + "px";
+        }
+        function onUp() {
+          h.removeEventListener("pointermove", onMove);
+          h.removeEventListener("pointerup", onUp);
+        }
+        h.addEventListener("pointermove", onMove);
+        h.addEventListener("pointerup", onUp);
+      });
+    }
+    makePopoverDraggable(inlineEditor.querySelector(".ieHead"));
+    makePopoverDraggable(document.getElementById("ieHandle"));
 
     // Ridimensiona il popover dal grip in basso a destra
     document.getElementById("ieGrip").addEventListener("pointerdown", function (e) {
@@ -1335,9 +1669,9 @@
       var origW = inlineEditor.offsetWidth, origH = inlineEditor.offsetHeight;
       function onMove(ev) {
         inlineEditor.style.width =
-          Math.min(Math.max(280, origW + ev.clientX - startX), window.innerWidth - 16) + "px";
+          Math.min(Math.max(360, origW + ev.clientX - startX), window.innerWidth - 16) + "px";
         inlineEditor.style.height =
-          Math.min(Math.max(160, origH + ev.clientY - startY), window.innerHeight - 16) + "px";
+          Math.min(Math.max(240, origH + ev.clientY - startY), window.innerHeight - 16) + "px";
       }
       function onUp() {
         grip.removeEventListener("pointermove", onMove);
@@ -1358,7 +1692,7 @@
       closeInlineEditor();
     });
 
-    // All'avvio carica l'elenco dei libri dal backend Nim
+    // All'avvio carica l'elenco dei libri serviti da Flask
     loadBookList();
   </script>
 </body>
