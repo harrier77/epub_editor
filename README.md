@@ -52,7 +52,7 @@ The flow is the same as Flask, but without a server:
 ### Unpacked EPUB folder (translator output)
 
 Aligned with `app.py`'s `--book-dir` mode: `FOLDER_BOOK_DIR`
-(`C:\Users\pr30565\Desktop\python\translator\target`) is served on
+(`..\translator\target`) is served on
 `https://ext/` and appears as the first book in the Library. Because files are
 read from disk on every request (the frontend adds a `t=` cache-buster), the
 translations saved by the translator are visible immediately, without
