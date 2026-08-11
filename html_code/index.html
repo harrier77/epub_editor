@@ -53,6 +53,14 @@
     #chapter { font-size: 12px; color: #aaa; }
     #filesToggle.active { background: #777; }
 
+    /* Bottoni tema di lettura: sfondo del testo */
+    #toolbar #bgYellowBtn { background: #fff9c4; color: #333; }
+    #toolbar #bgYellowBtn:hover { background: #ffe68a; }
+    #toolbar #bgBlackBtn { background: #0f0f0f; color: #fff; border: 1px solid #666; }
+    #toolbar #bgBlackBtn:hover { background: #2a2a2a; }
+    #toolbar #bgYellowBtn.active,
+    #toolbar #bgBlackBtn.active { outline: 2px solid #fff; outline-offset: -1px; }
+
     /* Sidebar condivisa (stile) */
     #sidebar, #librarySidebar {
       position: fixed;
@@ -283,7 +291,7 @@
       --chrome-zoom: 1;
     }
     #toolbar, #tabs, #status, #editorPanel,
-    #sidebar, #librarySidebar {
+    #sidebar, #librarySidebar, #metaEditor, #buildReport {
       zoom: var(--chrome-zoom);
     }
 
@@ -420,6 +428,136 @@
     #ieSave:hover { background: #4a8f4a; }
     #ieSave:disabled { background: #555; }
 
+    /* Editor metadati OPF (solo libri da cartella): modale centrato */
+    #metaEditor {
+      display: none;
+      position: fixed;
+      z-index: 1100;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 680px;
+      max-width: 94vw;
+      height: 72vh;
+      min-height: 320px;
+      flex-direction: column;
+      background: #262626;
+      border: 1px solid #666;
+      border-radius: 8px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.55);
+      overflow: hidden;
+      font-size: 14px;
+    }
+    #metaEditor.open { display: flex; }
+    .metaHead {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: #2f2f2f;
+      border-bottom: 1px solid #555;
+      flex-shrink: 0;
+    }
+    .metaHead span {
+      flex: 1;
+      font-weight: 600;
+      font-size: 14px;
+      color: #ddd;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .metaHead button {
+      background: none;
+      border: none;
+      color: #ccc;
+      cursor: pointer;
+      font-size: 17px;
+      padding: 0 4px;
+    }
+    .metaHead button:hover { color: #fff; }
+    #metaCode {
+      flex: 1;
+      min-height: 0;
+      border: none;
+      outline: none;
+      resize: none;
+      padding: 12px;
+      background: #1e1e1e;
+      color: #dcdcdc;
+      font-family: Consolas, 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      tab-size: 2;
+      white-space: pre;
+      overflow: auto;
+    }
+    .metaFoot {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-top: 1px solid #555;
+      flex-shrink: 0;
+    }
+    .metaFoot #metaPath {
+      flex: 1;
+      font-size: 11px;
+      color: #888;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .metaFoot button {
+      background: #555;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 8px 18px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .metaFoot button:hover { background: #666; }
+    .metaFoot button:disabled { opacity: .4; cursor: default; }
+    #metaSave { background: #3d7a3d; }
+    #metaSave:hover { background: #4a8f4a; }
+    #metaSave:disabled { background: #555; }
+
+    /* Report costruzione EPUB (modale centrato) */
+    #buildReport {
+      display: none;
+      position: fixed;
+      z-index: 1150;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 660px;
+      max-width: 94vw;
+      max-height: 82vh;
+      flex-direction: column;
+      background: #262626;
+      border: 1px solid #666;
+      border-radius: 8px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.55);
+      overflow: hidden;
+      font-size: 13px;
+    }
+    #buildReport.open { display: flex; }
+    #buildReportText {
+      flex: 1;
+      min-height: 180px;
+      max-height: 62vh;
+      overflow: auto;
+      padding: 12px 14px;
+      margin: 0;
+      background: #1e1e1e;
+      color: #dcdcdc;
+      font-family: Consolas, 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre;
+    }
+
     #status {
       position: fixed;
       top: 55px; left: 50%; transform: translateX(-50%);
@@ -443,6 +581,8 @@
     <button id="zoomIn" title="Aumenta zoom (contenuto di lettura)" disabled>A+</button>
     <button id="spreadToggle" disabled>Una pagina</button>
     <button id="reloadBtn" title="Ricarica il capitolo corrente dal disco (libri da cartella: mostra la traduzione salvata dal translator)" disabled>⟳ Ricarica</button>
+    <button id="metaEditBtn" title="Modifica i metadati dell'EPUB (solo libri da cartella)" disabled>⚙ Metadati</button>
+    <button id="buildBtn" title="Assembla un EPUB ben formato dalla cartella tradotta (come build_epub.py): mimetype non compresso, fallback sul tedesco per i capitoli non tradotti, dc:language -> it" disabled>📦 Crea EPUB</button>
     <select id="widthSelect" title="Larghezza massima pagina">
     <option value="30">30%</option>
     <option value="35">35%</option>
@@ -455,6 +595,8 @@
       <option value="90" selected>90%</option>
       <option value="100">100%</option>
     </select>
+    <button id="bgYellowBtn" title="Sfondo giallo pallido per il testo" disabled>Giallo</button>
+    <button id="bgBlackBtn" title="Sfondo nero con testo bianco" disabled>Nero</button>
     <span id="title">Lettore EPUB</span>
     <span id="chapter"></span>
   </div>
@@ -493,6 +635,33 @@
       <button id="ieSave">💾 Salva</button>
     </div>
     <div id="ieGrip" title="Ridimensiona"></div>
+  </div>
+
+  <!-- Editor metadati OPF (libri da cartella) -->
+  <div id="metaEditor" aria-hidden="true">
+    <div class="metaHead">
+      <span>Metadati EPUB (content.opf)</span>
+      <button id="metaClose" title="Chiudi (Esc)">✕</button>
+    </div>
+    <textarea id="metaCode" spellcheck="false" wrap="off"
+      placeholder="XML del package (OPF) con i metadati dell'EPUB…"></textarea>
+    <div class="metaFoot">
+      <span id="metaPath"></span>
+      <button id="metaCancel">Annulla</button>
+      <button id="metaSave">💾 Salva</button>
+    </div>
+  </div>
+
+  <!-- Report costruzione EPUB (port di build_epub.py) -->
+  <div id="buildReport" aria-hidden="true">
+    <div class="metaHead">
+      <span>Report costruzione EPUB</span>
+      <button id="buildReportClose" title="Chiudi (Esc)">✕</button>
+    </div>
+    <pre id="buildReportText"></pre>
+    <div class="metaFoot">
+      <button id="buildReportOk">OK</button>
+    </div>
   </div>
 
   <!-- Sidebar sinistra: libreria (scelta del libro) -->
@@ -563,6 +732,7 @@
     api.listBooks = createBridgeFn("epub", "listBooks");
     api.saveChapter = createBridgeFn("epub", "saveChapter");
     api.setZoom = createBridgeFn("epub", "setZoom");
+    api.buildEpub = createBridgeFn("epub", "buildEpub");
 
     // Alias identici a quelli del frontend Flask, così il resto del codice
     // (libreria, salvataggi) resta identico alla versione Python.
@@ -611,7 +781,7 @@
           bookListEl.innerHTML = "";
           if (!books || !books.length) {
             var empty = document.createElement("div");
-            empty.textContent = "Nessun libro trovato: metti dei file .epub in html_code/";
+            empty.textContent = "Nessun libro trovato: metti dei file .epub in epubs/";
             empty.style.cssText = "color:#999;font-size:13px;padding:8px;";
             bookListEl.appendChild(empty);
             return;
@@ -671,7 +841,9 @@
     // e Flask) riconosce la chiave "ext"; per i .epub il basename.
     function bookKey() {
       if (isFolderBook()) return "ext";
-      return currentBookUrl.replace(/^\//, "");
+      // Toglie l'eventuale origine (es. https://books/): il backend si aspetta
+      // solo il nome del file .epub relativo a gBooksDir.
+      return currentBookUrl.replace(/^https?:\/\/[^/]+/i, "").replace(/^\//, "");
     }
 
     // Percorso della voce dentro l'epub (zip: voce dell'archivio; cartella:
@@ -791,6 +963,8 @@
 
     function openBook(url) {
       closeInlineEditor(); // il popover in-context appartiene al libro precedente
+      closeMetaEditor();  // idem per l'editor dei metadati
+      closeBuildReport(); // e per il report di costruzione EPUB
       if (book) {
         try {
           book.destroy();
@@ -811,11 +985,19 @@
       // e pulsante "Ricarica" abilitato.
       if (isFolderBook()) installArchiveShim();
       document.getElementById("reloadBtn").disabled = !isFolderBook();
+      document.getElementById("metaEditBtn").disabled = !isFolderBook();
+      document.getElementById("buildBtn").disabled = !isFolderBook();
       rendition = book.renderTo("viewer", {
         width: "100%",
         height: "100%",
         flow: "paginated"
       });
+      // Tema di lettura (sfondo del testo): il content hook viene eseguito a
+      // ogni render di capitolo, così il tema scelto resta applicato anche
+      // dopo cambi pagina / salvataggi. Il container della pagina madre viene
+      // colorato subito: renderTo crea il div .epub-container in modo sincrono.
+      rendition.hooks.content.register(injectBgTheme);
+      applyBgToContainers();
 
       // Ad ogni render (apertura libro, cambio capitolo, resize) prepara
       // l'editing in-context sul documento del capitolo (popover al click).
@@ -867,6 +1049,8 @@
         document.getElementById("zoomOut").disabled = false;
         document.getElementById("zoomReset").disabled = false;
         document.getElementById("zoomIn").disabled = false;
+        document.getElementById("bgYellowBtn").disabled = false;
+        document.getElementById("bgBlackBtn").disabled = false;
         var title = book.packaging.metadata.title;
         if (title) document.getElementById("title").textContent = title;
         try {
@@ -957,6 +1141,61 @@
     document.getElementById("zoomReset").addEventListener("click", function () { applyZoom(1); });
     document.getElementById("zoomIn").addEventListener("click", function () { applyZoom(readerZoom + ZOOM_STEP); });
 
+    // --- Tema di lettura: sfondo del testo (giallo pallido / nero con testo bianco) ---
+    var bgThemes = {
+      bgYellow: "html, body { background-color: #fff9c4 !important; color: #1a1a1a !important; }",
+      bgBlack: "html { background-color: #000 !important; } " +
+               "body { background-color: #000 !important; color: #fff !important; } " +
+               "body * { color: #fff !important; } " +
+               "a { color: #9ecbff !important; }"
+    };
+    var bgThemeName = null; // "bgYellow" | "bgBlack" | null = nessun tema
+    // Colore di sfondo del container nella pagina madre: il div .epub-container
+    // ha un padding attorno all'area di lettura, che senza questo colore
+    // mostrava una cornice bianca attorno al tema scelto.
+    var bgThemeBg = { bgYellow: "#fff9c4", bgBlack: "#000" };
+
+    // Content hook di epub.js: eseguito su OGNI render di capitolo, mantiene
+    // il foglio di stile del tema attivo dentro il documento dell'iframe.
+    function injectBgTheme(contents) {
+      var doc = contents && contents.document;
+      if (!doc || !doc.head) return;
+      var id = "app-bg-theme";
+      var el = doc.getElementById(id);
+      if (!el) {
+        el = doc.createElement("style");
+        el.id = id;
+        doc.head.appendChild(el);
+      }
+      el.textContent = bgThemeName ? bgThemes[bgThemeName] : "";
+    }
+
+    // Applica il tema scelto; un secondo click sullo stesso bottone torna al normale.
+    // Colora (o ripristina) anche il container di epub.js nella pagina madre: il
+    // div .epub-container (id epubjs-container-...) ha un padding attorno
+    // all'area di lettura, che senza questo sfondo mostrava una cornice bianca.
+    function applyBgToContainers() {
+      var color = bgThemeName ? bgThemeBg[bgThemeName] : "";
+      var containers = document.querySelectorAll(".epub-container");
+      for (var i = 0; i < containers.length; i++) {
+        containers[i].style.backgroundColor = color;
+      }
+    }
+
+    function setBgTheme(name) {
+      if (bgThemeName === name) name = null; // toggle off
+      bgThemeName = name;
+      document.getElementById("bgYellowBtn").classList.toggle("active", bgThemeName === "bgYellow");
+      document.getElementById("bgBlackBtn").classList.toggle("active", bgThemeName === "bgBlack");
+      applyBgToContainers();
+      if (rendition) {
+        var contents = rendition.getContents();
+        if (contents) contents.forEach(injectBgTheme);
+      }
+    }
+    document.getElementById("bgYellowBtn").addEventListener("click", function () { setBgTheme("bgYellow"); });
+    document.getElementById("bgBlackBtn").addEventListener("click", function () { setBgTheme("bgBlack"); });
+
     // Ricarica il capitolo corrente dal disco (solo libri da cartella): la
     // traduzione salvata dal translator si vede senza riaprire il libro.
     function reloadCurrentChapter() {
@@ -994,6 +1233,206 @@
       });
     }
     document.getElementById("reloadBtn").addEventListener("click", reloadCurrentChapter);
+
+    // ==================================================================
+    // Editor metadati OPF (solo libri da cartella)
+    // ==================================================================
+    // Il libro da cartella è un epub NON impacchettato: i metadati vivono
+    // nell'OPF (content.opf, individuato dal full-path del rootfile in
+    // META-INF/container.xml). Questo editor li legge e li salva direttamente
+    // su disco con lo stesso apiSaveChapter dei capitoli (backend:
+    // saveChapterIntoFolder, chiave "ext").
+    var metaEditor = document.getElementById("metaEditor");
+    var metaCode = document.getElementById("metaCode");
+    var metaSave = document.getElementById("metaSave");
+    var metaPathEl = document.getElementById("metaPath");
+    var metaOpfPath = null; // percorso OPF in modifica (relativo al pacchetto)
+
+    // Estrae il titolo (<dc:title>) da un OPF per aggiornare toolbar/libreria
+    function metaTitleFromOpf(text) {
+      try {
+        var doc = new DOMParser().parseFromString(text, "text/xml");
+        if (doc.getElementsByTagName("parsererror").length) return "";
+        var el = doc.getElementsByTagName("dc:title")[0]
+              || doc.getElementsByTagNameNS("http://purl.org/dc/elements/1.1/", "title")[0];
+        if (!el) {
+          // fallback: qualsiasi <title> dentro <metadata>
+          var metas = doc.getElementsByTagName("metadata");
+          if (metas.length) {
+            var kids = metas[0].getElementsByTagName("*");
+            for (var i = 0; i < kids.length; i++) {
+              if ((kids[i].localName || kids[i].tagName).toLowerCase() === "title") {
+                el = kids[i];
+                break;
+              }
+            }
+          }
+        }
+        return el ? (el.textContent || "").trim() : "";
+      } catch (e) { return ""; }
+    }
+
+    // Percorso dell'OPF nel pacchetto: full-path del rootfile in
+    // META-INF/container.xml (già parsato da epub.js; fallback: rilettura).
+    function resolveOpfPath() {
+      if (book && book.container && book.container.packagePath) {
+        return Promise.resolve(book.container.packagePath);
+      }
+      var contUrl = currentBookUrl + "META-INF/container.xml?raw=1&t=" + Date.now();
+      return fetch(contUrl, { cache: "no-store" }).then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      }).then(function (text) {
+        var doc = new DOMParser().parseFromString(text, "text/xml");
+        var rf = doc.getElementsByTagName("rootfile")[0];
+        if (!rf) throw new Error("container.xml senza rootfile");
+        var fp = rf.getAttribute("full-path");
+        if (!fp) throw new Error("rootfile senza full-path");
+        return fp;
+      });
+    }
+
+    function openMetaEditor() {
+      if (!isFolderBook() || !currentBookUrl) return;
+      setStatus("Caricamento dei metadati…");
+      resolveOpfPath().then(function (opfPath) {
+        metaOpfPath = String(opfPath).replace(/^\//, "");
+        var sep = metaOpfPath.indexOf("?") >= 0 ? "&" : "?";
+        var reqUrl = currentBookUrl + metaOpfPath + sep + "raw=1&t=" + Date.now();
+        return fetch(reqUrl, { cache: "no-store" }).then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.text();
+        });
+      }).then(function (text) {
+        metaCode.value = text;
+        metaPathEl.textContent = "Modifica: " + metaOpfPath;
+        metaSave.disabled = false;
+        metaEditor.classList.add("open");
+        metaEditor.setAttribute("aria-hidden", "false");
+        metaCode.focus();
+        setStatus("");
+      }).catch(function (err) {
+        setStatus("Errore nel caricamento dei metadati: " +
+          (err && err.message ? err.message : err));
+      });
+    }
+
+    function closeMetaEditor() {
+      metaEditor.classList.remove("open");
+      metaEditor.setAttribute("aria-hidden", "true");
+      if (document.activeElement === metaCode) metaCode.blur();
+      metaOpfPath = null;
+    }
+
+    document.getElementById("metaEditBtn").addEventListener("click", openMetaEditor);
+    document.getElementById("metaClose").addEventListener("click", closeMetaEditor);
+    document.getElementById("metaCancel").addEventListener("click", closeMetaEditor);
+
+    metaSave.addEventListener("click", function () {
+      if (!metaOpfPath) return;
+      var content = metaCode.value;
+      // Validazione leggera: l'OPF deve restare XML ben formato
+      var xdoc = new DOMParser().parseFromString(content, "text/xml");
+      if (xdoc.getElementsByTagName("parsererror").length) {
+        setStatus("XML non valido: correggi la sintassi prima di salvare.");
+        return;
+      }
+      metaSave.disabled = true;
+      apiSaveChapter({
+        book: bookKey(),
+        href: metaOpfPath,
+        content: content
+      }).then(function (res) {
+        if (res && res.ok) {
+          // Aggiorna titolo in toolbar e nella riga della libreria; il resto
+          // dei metadati (nav, copertina…) si applica riaprendo il libro.
+          var t = metaTitleFromOpf(content);
+          if (t) {
+            document.getElementById("title").textContent = t;
+            var rows = bookListEl.querySelectorAll(".bookItem");
+            for (var i = 0; i < rows.length; i++) {
+              if (rows[i].dataset.url === currentBookUrl) {
+                rows[i].querySelector(".bookTitle").textContent = t;
+              }
+            }
+          }
+          closeMetaEditor();
+          setStatus("Metadati salvati nella cartella ✓ (riapri il libro per applicarli al lettore)");
+        } else {
+          metaSave.disabled = false;
+          setStatus("Errore nel salvataggio: " + ((res && res.error) || "sconosciuto"));
+        }
+      }).catch(function (err) {
+        metaSave.disabled = false;
+        setStatus("Errore del server: " + err);
+      });
+    });
+
+    // ==================================================================
+    // Costruzione EPUB da cartella (port di build_epub.py)
+    // ==================================================================
+    // Il bottone "Crea EPUB" lancia la routine Nim equivalente a
+    // build_epub.py: assembla un EPUB ben formato (mimetype STORED per
+    // primo, fallback sul sorgente tedesco per i capitoli non tradotti,
+    // dc:language -> it) e scrive <cartella-target>.epub accanto al target.
+    var buildReport = document.getElementById("buildReport");
+    var buildReportText = document.getElementById("buildReportText");
+
+    function showBuildReport(res) {
+      var lines = [];
+      lines.push("=== FILE NELL'EPUB ===");
+      (res.files || []).forEach(function (f) {
+        var note = f.note ? "  — " + f.note : "";
+        lines.push("  " + (note ? "⚠ " : "  ") + f.name +
+          "  (" + formatSize(f.size) + ")" + note);
+      });
+      lines.push("");
+      lines.push("=== RIEPILOGO ===");
+      lines.push("File inclusi ............ " + res.fileCount);
+      lines.push("  capitoli dal target ... " + res.capTarget);
+      lines.push("  capitoli in fallback ... " + res.capFallback + " (tedesco)");
+      lines.push("Dimensione ............. " + formatSize(res.size));
+      lines.push("Output ................. " + res.output);
+      if (res.problems && res.problems.length) {
+        lines.push("");
+        lines.push("=== PROBLEMI RILEVATI ===");
+        res.problems.forEach(function (p) { lines.push("  ✗ " + p); });
+      } else {
+        lines.push("");
+        lines.push("✅ EPUB valido: " + res.output);
+      }
+      buildReportText.textContent = lines.join("\n");
+      buildReport.classList.add("open");
+      buildReport.setAttribute("aria-hidden", "false");
+    }
+
+    function closeBuildReport() {
+      buildReport.classList.remove("open");
+      buildReport.setAttribute("aria-hidden", "true");
+    }
+
+    document.getElementById("buildReportClose").addEventListener("click", closeBuildReport);
+    document.getElementById("buildReportOk").addEventListener("click", closeBuildReport);
+
+    document.getElementById("buildBtn").addEventListener("click", function () {
+      var btn = document.getElementById("buildBtn");
+      btn.disabled = true;
+      setStatus("Costruzione dell'EPUB in corso…");
+      api.buildEpub(null).then(function (res) {
+        btn.disabled = !isFolderBook();
+        if (res && res.ok) {
+          setStatus("EPUB creato ✓ (" + res.output + ")");
+        } else if (res && res.error) {
+          setStatus("Errore nella costruzione: " + res.error);
+        } else {
+          setStatus("Costruzione terminata: vedi il report.");
+        }
+        showBuildReport(res || {});
+      }).catch(function (err) {
+        btn.disabled = !isFolderBook();
+        setStatus("Errore del server: " + err);
+      });
+    });
 
     // Sidebar: toggle on/off del browser del pacchetto EPUB
     document.getElementById("filesToggle").addEventListener("click", function () {
@@ -1113,10 +1552,11 @@
       // Dentro gli editor (full-chapter o popover in-context) le frecce
       // muovono il cursore, non sfogliano
       var t = e.target;
-      var isEditor = t && (t.id === "codeEditor" || t.id === "ieCode");
+      var isEditor = t && (t.id === "codeEditor" || t.id === "ieCode" || t.id === "metaCode");
       if (isEditor) {
         if (e.key === "Escape") {
           if (t.id === "ieCode") closeInlineEditor();
+          else if (t.id === "metaCode") closeMetaEditor();
           else showTab("view");
         }
         return;
@@ -1125,6 +1565,8 @@
       else if (e.key === "ArrowLeft") navigate(-1);
       else if (e.key === "Escape") {
         if (inlineEditor.classList.contains("open")) { closeInlineEditor(); return; }
+        if (metaEditor.classList.contains("open")) { closeMetaEditor(); return; }
+        if (buildReport.classList.contains("open")) { closeBuildReport(); return; }
         closeLibrary();
         document.getElementById("sidebar").classList.remove("open");
         document.getElementById("filesToggle").classList.remove("active");
@@ -1134,6 +1576,7 @@
     // --- Tab: lettura / modifica HTML ---
     function showTab(which) {
       closeInlineEditor(); // il popover in-context vive solo nel viewer
+      closeMetaEditor();   // l'editor metadati è un modale: si chiude al cambio tab
       var viewTab = document.getElementById("tabView");
       var editTab = document.getElementById("tabEdit");
       var editorPanel = document.getElementById("editorPanel");
@@ -1370,6 +1813,11 @@
       inlineBoundDocs.add(doc);
       doc.addEventListener("click", function (e) {
         if (e.button && e.button !== 0) return;              // solo click sinistro
+        // Popover aperto: i click nel libro NON devono chiuderlo ne' sostituire
+        // il paragrafo in modifica (perderesti le modifiche in corso). Si esce
+        // solo con Annulla / ✕ / Esc / Salva. I link continuano a navigare (li
+        // gestisce epub.js); se il capitolo cambia, "relocated" chiude il popover.
+        if (inlineEditor.classList.contains("open")) return;
         var t = e.target;
         if (t && t.closest && t.closest("a")) { closeInlineEditor(); return; } // i link li gestisce epub.js
         var el = t ? inlineBlockFrom(t) : null;
@@ -1681,16 +2129,14 @@
       grip.addEventListener("pointerup", onUp);
     });
 
-    // Clic fuori dal popover (nella pagina madre): chiudi. Il bottone
-    // "Paragrafo selezionato" e' escluso: il suo click arriva qui in bubbling
-    // DOPO l'handler del bottone, e chiuderebbe all'istante cio' che ha appena
-    // aperto (popover che si apre e si richiude subito = "non succede niente").
-    document.addEventListener("click", function (e) {
-      if (!inlineEditor.classList.contains("open")) return;
-      if (inlineEditor.contains(e.target)) return;
-      if (e.target && e.target.closest && e.target.closest("#tabEditSel")) return;
-      closeInlineEditor();
-    });
+    // NOTA: niente "clic fuori = chiudi" per il popover di editing.
+    // Un click fuori arrivava solo dalle aree della pagina madre (margine a
+    // destra del viewer, toolbar, tab): i click sul libro viaggiano dentro gli
+    // iframe di epub.js e NON raggiungono il documento madre, quindi la
+    // chiusura avveniva solo a destra del popover (comportamento asimmetrico
+    // e incomprensibile). Peggio: chiudere equivaleva ad "Annulla" e le
+    // modifiche non salvate andavano perse. Il popover si chiude solo con
+    // Annulla / ✕ / Esc / Salva (o al cambio di capitolo/libro/tab).
 
     // All'avvio carica l'elenco dei libri serviti da Flask
     loadBookList();

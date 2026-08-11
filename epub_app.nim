@@ -8,8 +8,10 @@
 ##     host ("https://appassets/") invece che da un server HTTP.
 ##   - Il bridge Nim <-> JavaScript fornisce l'elenco dei libri (listBooks),
 ##     leggendo il titolo da ciascun .epub con zippy (unzip in puro Nim).
-##   - epub.js apre il file .epub via https://appassets/<nome>.epub e lo
-##     unzipa da solo (JSZip), esattamente come nella versione Flask.
+##   - La cartella epubs/ con i file .epub viene mappata su un secondo
+##     virtual host ("https://books/"): epub.js apre il file via
+##     https://books/<nome>.epub e lo unzipa da solo (JSZip), esattamente
+##     come nella versione Flask.
 ##
 ## Epub NON impacchettato (allineato a app.py / --book-dir):
 ##   - La cartella esterna con l'output del translator (META-INF/ + OEBPS/)
@@ -31,7 +33,8 @@ import
 # Costante: nome del virtual host e cartella con il frontend
 # ------------------------------------------------------------------
 const
-  VHOST* = "appassets"          # https://appassets/...
+  VHOST* = "appassets"          # https://appassets/... (frontend html_code/)
+  BOOKS_HOST* = "books"         # https://books/... (cartella con i file .epub)
   HOST_ACCESS_ALLOW = 1         # COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND::ALLOW
   # Epub NON impacchettato (output del translator): cartella mappata su
   # https://ext/ e mostrata come primo libro in Libreria (come --book-dir
@@ -188,7 +191,7 @@ proc saveChapterIntoFolder(root, href, content: string): string =
   return ""
 
 # ------------------------------------------------------------------
-# Elenco dei libri nella cartella html_code/ (e dell'epub da cartella)
+# Elenco dei libri nella cartella epubs/ (e dell'epub da cartella)
 # ------------------------------------------------------------------
 proc listEpubBooks*(dir, folderDir: string): seq[JsonNode] =
   result = @[]
@@ -206,7 +209,7 @@ proc listEpubBooks*(dir, folderDir: string): seq[JsonNode] =
       "type":  "folder"
     })
 
-  # 2) File .epub in html_code/
+  # 2) File .epub nella cartella libri (https://books/)
   if not dirExists(dir):
     echo "[epub] Cartella non trovata: ", dir
     return
@@ -219,7 +222,7 @@ proc listEpubBooks*(dir, folderDir: string): seq[JsonNode] =
     result.add(%*{
       "name":  name.path,
       "title": display,
-      "url":   "/" & name.path,
+      "url":   "https://" & BOOKS_HOST & "/" & name.path,
       "size":  getFileSize(full)
     })
   # ordinamento per nome file (come in app.py)
@@ -231,8 +234,9 @@ proc listEpubBooks*(dir, folderDir: string): seq[JsonNode] =
 # Salvataggio di un file modificato dentro l'epub
 # ------------------------------------------------------------------
 var
-  gBooksDir: string   # cartella con i file .epub
-  gFolderDir: string  # cartella esterna con l'epub non impacchettato (https://ext/)
+  gFrontendDir: string # cartella html_code/ servita su https://appassets/ (frontend)
+  gBooksDir: string    # cartella con i file .epub (mappata su https://books/)
+  gFolderDir: string   # cartella esterna con l'epub non impacchettato (https://ext/)
 
 proc saveChapterIntoEpub(bookPath, href, content: string): string =
   ## Riscrive il file .epub su disco sostituendo il contenuto della voce
@@ -356,7 +360,8 @@ proc mio_new_webview_blank(title = ""; width = 1200; height = 800): Webview =
 # ------------------------------------------------------------------
 when isMainModule:
   let exeDir = getAppDir()
-  gBooksDir = exeDir / "html_code"
+  gFrontendDir = exeDir / "html_code"
+  gBooksDir = exeDir / "epubs"
 
   # Epub NON impacchettato (output del translator): se la cartella esiste la
   # mappiamo su https://ext/ (in app.py: --book-dir).
@@ -383,10 +388,19 @@ when isMainModule:
   # Registra il bridge callback
   w.externalInvokeCB = handleBridge
 
-  # Mappa https://appassets/ -> cartella html_code (serve i file senza server)
-  let hr = w.mio_registerVirtualHost(VHOST, gBooksDir, allow = true)
+  # Mappa https://appassets/ -> cartella html_code (serve il frontend senza server)
+  let hr = w.mio_registerVirtualHost(VHOST, gFrontendDir, allow = true)
   if hr != S_OK:
     echo "[epub] AVVISO: registro virtual host fallito (", $hr, ")"
+
+  # Mappa https://books/ -> cartella epubs/ con i file .epub: epub.js li apre
+  # via https://books/<nome>.epub e li unzipa da solo con JSZip.
+  if dirExists(gBooksDir):
+    let hr3 = w.mio_registerVirtualHost(BOOKS_HOST, gBooksDir, allow = true)
+    if hr3 != S_OK:
+      echo "[epub] AVVISO: registro virtual host ", BOOKS_HOST, " fallito (", $hr3, ")"
+  else:
+    echo "[epub] AVVISO: cartella libri non trovata: ", gBooksDir
 
   # Mappa https://ext/ -> cartella dell'epub non impacchettato: i file vengono
   # riletti dal disco a ogni richiesta (le traduzioni salvate si vedono subito,
