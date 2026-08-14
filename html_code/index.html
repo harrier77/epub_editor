@@ -413,6 +413,17 @@
       padding: 10px 14px;
       border-top: 1px solid #555;
     }
+    .ieHint {
+      flex-shrink: 0;
+      padding: 6px 14px;
+      border-top: 1px solid #444;
+      background: #2a2a2a;
+      color: #9a9a9a;
+      font-size: 12px;
+      line-height: 1.5;
+      user-select: text;
+    }
+    .ieHint b { color: #c9a86a; font-weight: normal; }
     .ieFoot button {
       background: #555;
       color: #fff;
@@ -630,6 +641,7 @@
       <button id="ieClose" title="Chiudi (Esc)">✕</button>
     </div>
     <textarea id="ieCode" spellcheck="false"></textarea>
+    <div class="ieHint">Un elemento per riga: per spezzare il paragrafo o aggiungerne altri in coda scrivi più tag, es. <b>&lt;p&gt;prima parte&lt;/p&gt;&lt;p&gt;seconda parte&lt;/p&gt;</b></div>
     <div class="ieFoot">
       <button id="ieCancel">Annulla</button>
       <button id="ieSave">💾 Salva</button>
@@ -1923,27 +1935,35 @@
       };
     }
 
-    // Converte l'HTML inserito dall'utente in un nodo nel namespace XHTML.
+    // Converte l'HTML inserito dall'utente in un ARRAY di nodi nel namespace
+    // XHTML (TUTTI gli elementi di primo livello digitati, non solo il primo:
+    // così si può spezzare un paragrafo in due o accodarne altri).
     // Prima prova il parsing XML rigoroso; se fallisce (es. <br>, <img>, <li>
     // non autochiusi, & non escapato) usa il parser HTML tollerante e
     // rinomina gli elementi nel namespace XHTML. La serializzazione finale
-    // (outerHTML su documento XML) escape sempre &, <, >. Ritorna null se
+    // (outerHTML su documento XML) escape sempre &, <, >. Ritorna [] se
     // l'HTML non produce alcun elemento.
     function parseUserHtml(newHtml, doc) {
       var XHTML_NS = "http://www.w3.org/1999/xhtml";
+      var nodes = [];
       // 1) Parsing XML rigoroso (XHTML)
       var xdoc = new DOMParser().parseFromString(
         '<div xmlns="' + XHTML_NS + '">' + newHtml + "</div>",
         "application/xhtml+xml");
       if (!xdoc.getElementsByTagName("parsererror").length) {
-        var xe = xdoc.documentElement.firstElementChild;
-        if (xe) return doc.importNode(xe, true);
+        // Tutti i figli di primo livello del wrapper (elementi + testo non
+        // bianco): si salvano anche i paragrafi aggiunti dopo il primo.
+        for (var i = 0; i < xdoc.documentElement.childNodes.length; i++) {
+          var cn = xdoc.documentElement.childNodes[i];
+          if (cn.nodeType === 3 && !cn.nodeValue.replace(/\s/g, "")) continue;
+          nodes.push(doc.importNode(cn, true));
+        }
+        if (nodes.length) return nodes;
       }
       // 2) Parsing HTML tollerante + rinominazione nel namespace XHTML
       var hdoc = new DOMParser().parseFromString("<div>" + newHtml + "</div>", "text/html");
       var wrapper = hdoc.body ? hdoc.body.firstElementChild : null;
-      var src = wrapper ? wrapper.firstElementChild : null;
-      if (!src) return null;
+      if (!wrapper) return [];
       function rebuild(srcNode) {
         var node;
         if (srcNode.nodeType === 1) {
@@ -1966,7 +1986,11 @@
         if (srcNode.nodeType === 8) return doc.createComment(srcNode.nodeValue);
         return null;
       }
-      return rebuild(src);
+      for (var j = 0; j < wrapper.childNodes.length; j++) {
+        var n = rebuild(wrapper.childNodes[j]);
+        if (n) nodes.push(n);
+      }
+      return nodes;
     }
 
     // Ricostruisce il capitolo col paragrafo sostituito, partendo dal testo
@@ -2003,11 +2027,17 @@
           target = target.children[path[j]];
         }
         if (!target) throw new Error("elemento non trovato nel documento originale");
-        // Nuovo nodo dall'HTML inserito: parsing XHTML rigoroso con fallback
-        // HTML tollerante (vedi parseUserHtml)
-        var node = parseUserHtml(newHtml, cleanDoc);
-        if (!node) throw new Error("HTML non valido: " + newHtml);
-        target.parentNode.replaceChild(node, target);
+        // Nuovi nodi dall'HTML inserito: parsing XHTML rigoroso con fallback
+        // HTML tollerante (vedi parseUserHtml). L'array contiene TUTTI gli
+        // elementi di primo livello digitati dall'utente; vengono inseriti
+        // tutti nella posizione dell'elemento originale, quindi si puo'
+        // spezzare un paragrafo in due (<p>a</p><p>b</p>) oppure accodare
+        // nuovi paragrafi dopo quello editato.
+        var nodes = parseUserHtml(newHtml, cleanDoc);
+        if (!nodes || !nodes.length) throw new Error("HTML non valido: " + newHtml);
+        var frag = cleanDoc.createDocumentFragment();
+        for (var k = 0; k < nodes.length; k++) frag.appendChild(nodes[k]);
+        target.parentNode.replaceChild(frag, target);
         // Serializza conservando il preambolo originale (<?xml?>, <!DOCTYPE>, commenti)
         var m = /\<html[\s>]/i.exec(rawText);
         var prefix = m ? rawText.substring(0, m.index) : "";
