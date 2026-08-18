@@ -213,8 +213,9 @@
       width: 100%;
       background: #fafafa;
       box-shadow: 0 0 30px rgba(0,0,0,.5);
-      overflow: hidden;
+      overflow: auto;     /* scroll quando il contenuto zoomato eccede la box */
       touch-action: none; /* niente panning nativo: i gesti li gestisce epub.js */
+      zoom: var(--app-zoom, 1); /* zoom CSS sul solo contenuto di lettura */
     }
 
     /* Editor HTML */
@@ -278,22 +279,16 @@
     .epub-container {
       touch-action: none;
       box-sizing: border-box;
-      padding: 3% 4%; /* margine attorno all'area di lettura; epub.js sottrae il padding del container dalla size */
+      padding: 3% 3%; /* margine attorno all'area di lettura; epub.js sottrae il padding del container dalla size */
     }
 
-    /* Zoom browser (WebView2) sul solo contenuto di lettura.
-       WebView2 zooma l'intera pagina; il "chrome" fisso viene contro-ruotato
-       con zoom 1/Z per restare visivamente invariato. #viewer resta a zoom 1:
-       epub.js misura (clientWidth/offsetWidth) in CSS px coerenti con lo zoom.
-       #inlineEditor è escluso: si posiziona con le rect del contenuto letto. */
-    :root {
-      --app-zoom: 1;
-      --chrome-zoom: 1;
-    }
-    #toolbar, #tabs, #status, #editorPanel,
-    #sidebar, #librarySidebar, #metaEditor, #buildReport {
-      zoom: var(--chrome-zoom);
-    }
+    /* Zoom del contenuto di lettura: CSS zoom applicato solo a #viewer.
+       #viewer è un flex child con flex:1; il suo layout box è deciso
+       dall'algoritmo flex e non cambia quando si applica zoom all'elemento
+       stesso (zoom afecta solo il rendering visivo, non le metriche layout).
+       epub.js misura clientWidth/offsetWidth che tornano i CSS-pixel PRIMA
+       dello zoom dell'elemento → paginazione a colonne corretta a ogni
+       livello di zoom. Nessun counter-zoom sugli altri elementi. */
 
     /* Popover editing in-context (paragrafo cliccato nel viewer) */
     #inlineEditor {
@@ -336,7 +331,7 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 10px 14px;
+      padding: 3px 10px;
       background: #2f2f2f;
       border-bottom: 1px solid #555;
       border-radius: 0;
@@ -358,15 +353,15 @@
       border: none;
       color: #ccc;
       cursor: pointer;
-      font-size: 17px;
-      padding: 0 4px;
+      font-size: 12px;
+      padding: 4px 4px;
     }
     .ieHead button:hover { color: #fff; }
     #ieCode {
       width: 100%;
       flex: 1 1 auto;
       min-height: 160px;
-      max-height: 55vh;
+      max-height: 60vh;
       border: none;
       outline: none;
       resize: none;
@@ -374,8 +369,8 @@
       background: #1e1e1e;
       color: #dcdcdc;
       font-family: Consolas, 'Courier New', monospace;
-      font-size: 15px;
-      line-height: 1.6;
+      font-size: 12px;
+      line-height: 1.2;
       tab-size: 2;
       white-space: pre-wrap;   /* testo a capo invece dello scroll orizzontale */
       overflow-wrap: break-word;
@@ -410,7 +405,7 @@
       display: flex;
       justify-content: flex-end;
       gap: 10px;
-      padding: 10px 14px;
+      padding: 4px 4px;
       border-top: 1px solid #555;
     }
     .ieHint {
@@ -429,14 +424,16 @@
       color: #fff;
       border: none;
       border-radius: 4px;
-      padding: 8px 18px;
+      padding: 3px 3px;
       cursor: pointer;
-      font-size: 15px;
+      font-size: 10px;
     }
     .ieFoot button:hover { background: #666; }
     .ieFoot button:disabled { opacity: .4; cursor: default; }
     #ieSave { background: #3d7a3d; }
+    #ieCancel { background: #D3D3D3;color:black }
     #ieSave:hover { background: #4a8f4a; }
+    #ieCancel:hover { background: white; }
     #ieSave:disabled { background: #555; }
 
     /* Editor metadati OPF (solo libri da cartella): modale centrato */
@@ -638,13 +635,16 @@
     <div id="ieHandle" title="Trascina per spostare">☰ ☰ ☰</div>
     <div class="ieHead">
       <span id="ieTitle">Modifica paragrafo</span>
+       <button id="ieSave">💾 Salva</button>
+       <button id="ieCancel">Annulla</button>
       <button id="ieClose" title="Chiudi (Esc)">✕</button>
     </div>
     <textarea id="ieCode" spellcheck="false"></textarea>
-    <div class="ieHint">Un elemento per riga: per spezzare il paragrafo o aggiungerne altri in coda scrivi più tag, es. <b>&lt;p&gt;prima parte&lt;/p&gt;&lt;p&gt;seconda parte&lt;/p&gt;</b></div>
+    <!--<div class="ieHint">Un elemento per riga: es. <b>&lt;p&gt;prima parte&lt;/p&gt;&lt;p&gt;seconda parte&lt;/p&gt;</b></div>-->
     <div class="ieFoot">
-      <button id="ieCancel">Annulla</button>
-      <button id="ieSave">💾 Salva</button>
+      <!--<button id="ieCancel">Annulla</button>
+      <button id="ieSave">💾 Salva</button>-->
+      <span>&nbsp;&nbsp;</span>
     </div>
     <div id="ieGrip" title="Ridimensiona"></div>
   </div>
@@ -743,7 +743,6 @@
 
     api.listBooks = createBridgeFn("epub", "listBooks");
     api.saveChapter = createBridgeFn("epub", "saveChapter");
-    api.setZoom = createBridgeFn("epub", "setZoom");
     api.buildEpub = createBridgeFn("epub", "buildEpub");
 
     // Alias identici a quelli del frontend Flask, così il resto del codice
@@ -1138,16 +1137,17 @@
       if (!rendition) return;
       z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
       readerZoom = z;
-      document.documentElement.style.setProperty("--app-zoom", z);
-      document.documentElement.style.setProperty("--chrome-zoom", 1 / z);
+      // CSS zoom applicato SOLO a #viewer (flex child): il layout flex
+      // mantiene le dimensioni della box invariate, solo il rendering
+      // visivo viene ingrandito/rimpicciolito. Nessun counter-zoom.
+      viewer.style.setProperty("--app-zoom", z);
       document.getElementById("zoomReset").textContent = Math.round(z * 100) + "%";
-      api.setZoom({ factor: z }).then(function () {
-        // Lo zoom WebView2 è applicato: attendi un frame (le misure in CSS px
-        // sono aggiornate) e rifluisci come accade su resize di finestra.
-        requestAnimationFrame(function () {
-          if (rendition) rendition.resize();
-        });
-      }).catch(function (err) { setStatus("Errore zoom: " + err); });
+      // epub.js deve ricalcolare la paginazione a colonne: le misure
+      // clientWidth/offsetWidth tornano i CSS-pixel pre-zoom, quindi
+      // la paginazione resta corretta a ogni livello di zoom.
+      requestAnimationFrame(function () {
+        if (rendition) rendition.resize();
+      });
     }
     document.getElementById("zoomOut").addEventListener("click", function () { applyZoom(readerZoom - ZOOM_STEP); });
     document.getElementById("zoomReset").addEventListener("click", function () { applyZoom(1); });
