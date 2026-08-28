@@ -27,28 +27,57 @@
       flex-direction: column;
     }
 
+    /* TOOLBAR — allineata alla versione Flask (static/index.html): le tab
+       diventano bottoni-icona DENTRO la toolbar e la barra è compatta
+       (padding 1px), con overflow hidden così su mobile non forza
+       l'espansione della pagina. */
     #toolbar {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 8px 12px;
+      padding: 1px 1px;
       background: #3a3a3a;
       border-bottom: 1px solid #555;
       flex-shrink: 0;
+      /* Su mobile i bottoni sono troppi e la toolbar diverrebbe più
+         larga del viewport, forzando il browser a espandere la pagina.
+         Con overflow:hidden la toolbar rimane entro lo schermo e i
+         bottoni in eccesso vengono nascosti (vedi media query sotto). */
+      overflow: hidden;
+    }
+    @media (max-width: 600px) {
+      #toolbar {
+        gap: 4px;
+        padding: 6px 6px;
+      }
+      #toolbar button, #toolbar select {
+        padding: 4px 6px;
+        font-size: 12px;
+      }
+      /* Nasconde i bottoni meno importanti su schermi stretti */
+      #toolbar #reloadBtn,
+      #toolbar #metaEditBtn,
+      /* PLACEHOLDER RICERCA: quando verrà portata in Nim, riaggiungere qui
+         `#toolbar #searchToggle,` (vedi media query della versione Flask). */
+      #toolbar #widthSelect,
+      #toolbar #bgYellowBtn,
+      #toolbar #bgBlackBtn {
+        display: none;
+      }
     }
     #toolbar button {
       background: #555;
       color: #fff;
       border: none;
       border-radius: 4px;
-      padding: 6px 12px;
+      padding: 1px 1px;
       cursor: pointer;
-      font-size: 14px;
+      font-size: 16px;
     }
     #toolbar button:hover { background: #666; }
     #toolbar button:disabled { opacity: .4; cursor: default; }
     #libraryToggle.active { background: #777; }
-    #title { flex: 1; text-align: center; font-weight: 600; overflow: hidden;
+    #title { flex: 1; margin-left: 2rem; text-align: left; font-weight: 600; overflow: hidden;
              white-space: nowrap; text-overflow: ellipsis; }
     #chapter { font-size: 12px; color: #aaa; }
     #filesToggle.active { background: #777; }
@@ -173,38 +202,9 @@
     .fileItem.active { background: #5a7fb0; color: #fff; }
     .fileIcon { font-size: 15px; flex-shrink: 0; }
 
-    /* Tab bar */
-    #tabs {
-      display: flex;
-      gap: 4px;
-      padding: 6px 12px 0;
-      background: #2f2f2f;
-      border-bottom: 1px solid #444;
-      flex-shrink: 0;
-    }
-    #tabs .tab {
-      background: #3f3f3f;
-      color: #ccc;
-      border: 1px solid #444;
-      border-bottom: none;
-      border-radius: 6px 6px 0 0;
-      padding: 7px 18px;
-      cursor: pointer;
-      font-size: 13px;
-      font-weight: 600;
-    }
-    #tabs .tab:hover { background: #4a4a4a; color: #fff; }
-    #tabs .tab.active {
-      background: #fafafa;
-      color: #222;
-      border-color: #fafafa;
-    }
-    #tabs .tab:disabled { opacity: .4; cursor: default; }
-    #tabs .tab.actionBtn {
-      background: #3f3f2c;
-      border-color: #5d5d33;
-    }
-    #tabs .tab.actionBtn:hover { background: #55553a; }
+    /* Le tab (Lettura/Modifica/Paragrafo) ora vivono dentro #toolbar come
+       bottoni-icona e usano lo stile di #toolbar button: il vecchio blocco
+       #tabs è stato rimosso perché il div con quell'id non esiste più. */
 
     #viewer {
       flex: 1;
@@ -357,6 +357,56 @@
       padding: 4px 4px;
     }
     .ieHead button:hover { color: #fff; }
+    .ieModeBtn { border: 1px solid #666 !important; border-radius: 4px; padding: 2px 6px !important; }
+    .ieModeBtn.active { background: #5a7fb0; color: #fff; }
+    /* Frammenti di testo del paragrafo: un campo editabile per il pezzo di
+       testo cliccato/selezionato. La struttura HTML (<em>, <strong>, …) non
+       è esposta: si modifica solo il nodo di testo, quindi al salvataggio
+       nulla del markup può rompersi. */
+    #ieFrags {
+      flex: 1 1 auto;
+      min-height: 120px;
+      max-height: 60vh;
+      overflow: auto;
+      padding: 8px 10px;
+      background: #1e1e1e;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .fragItem {
+      display: flex;
+      gap: 6px;
+      align-items: stretch;
+    }
+    .fragIdx {
+      flex-shrink: 0;
+      min-width: 34px;
+      color: #7a7a7a;
+      font-size: 10px;
+      font-family: Consolas, monospace;
+      text-align: right;
+      padding-top: 6px;
+      white-space: nowrap;
+      user-select: none;
+    }
+    textarea.ieFrag {
+      flex: 1;
+      border: 1px solid #3d3d3d;
+      border-radius: 4px;
+      outline: none;
+      resize: vertical;
+      padding: 5px 7px;
+      background: #161616;
+      color: #dcdcdc;
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 13px;
+      line-height: 1.45;
+      overflow-wrap: break-word;
+      word-break: break-word;
+      overflow: auto;
+    }
+    textarea.ieFrag:focus { border-color: #c9a86a; }
     #ieCode {
       width: 100%;
       flex: 1 1 auto;
@@ -579,18 +629,37 @@
 <body>
   <div id="status">Caricamento...</div>
 
+  <!-- PLACEHOLDER RICERCA (non ancora portata in Nim): in questa posizione la
+       versione Flask ha l'elemento
+         <div id="searchBar"> ... <input id="searchInput" .../ /> ... </div>
+       e, nella toolbar sotto, il bottone
+         <button id="searchToggle" disabled title="Search in current chapter" style="font-size:20px">🔎</button>
+       La ricerca verrà portata su Nim in un secondo momento (vedi anche il
+       placeholder nel CSS e nello script). -->
+
   <div id="toolbar">
     <button id="libraryToggle" title="Libreria">📚</button>
     <button id="filesToggle" title="File inclusi nell'EPUB">📂</button>
     <button id="prev" title="Pagina precedente" disabled style="width:4rem;font-size:1.2rem">‹</button>
     <button id="next" title="Pagina successiva" disabled style="width:4rem;font-size:1.2rem">›</button>
+    <!-- Tab lettura / modifica HTML: ora dentro la toolbar, icona-only
+         (come la versione Flask). Il div #tabs separato è stato rimosso. -->
+    <button id="tabView" class="tab active">📖</button>
+    <button id="tabEdit" class="tab" disabled>✏️</button>
+    <button id="tabEditSel" class="tab actionBtn"
+      title="Mostra l'editor in-context per il paragrafo appena cliccato nel lettore (clicca prima sul paragrafo)"  style="padding:0;font-size:22px">🔠</button>
     <button id="zoomOut" title="Riduci zoom (contenuto di lettura)" disabled>A−</button>
     <button id="zoomReset" title="Reimposta zoom al 100%" disabled>100%</button>
     <button id="zoomIn" title="Aumenta zoom (contenuto di lettura)" disabled>A+</button>
-    <button id="spreadToggle" disabled>Una pagina</button>
-    <button id="reloadBtn" title="Ricarica il capitolo corrente dal disco (libri da cartella: mostra la traduzione salvata dal translator)" disabled>⟳ Ricarica</button>
-    <button id="metaEditBtn" title="Modifica i metadati dell'EPUB (solo libri da cartella)" disabled>⚙ Metadati</button>
-    <button id="buildBtn" title="Assembla un EPUB ben formato dalla cartella tradotta (come build_epub.py): mimetype non compresso, fallback sul tedesco per i capitoli non tradotti, dc:language -> it" disabled>📦 Crea EPUB</button>
+    <button id="spreadToggle" disabled title="Toggle single/double page view">📄</button>
+    <button id="reloadBtn" title="Ricarica il capitolo corrente dal disco (libri da cartella: mostra la traduzione salvata dal translator)" disabled>🔄</button>
+    <button id="metaEditBtn" title="Modifica i metadati dell'EPUB (solo libri da cartella)" disabled>⚙️</button>
+    <!-- PLACEHOLDER RICERCA: qui va inserito, quando search verrà portata in
+         Nim, il bottone <button id="searchToggle" ...>🔎</button>. -->
+    <!-- buildBtn (📦 Crea EPUB) rimosso: la versione Nim non porta buildEpub
+         per il momento. Se in futuro servirà, ripristinare qui il bottone
+         <button id="buildBtn" ...>📦 Crea EPUB</button> e il relativo handler
+         nello script (vedi placeholder lì). -->
     <select id="widthSelect" title="Larghezza massima pagina">
     <option value="30">30%</option>
     <option value="35">35%</option>
@@ -603,18 +672,10 @@
       <option value="90" selected>90%</option>
       <option value="100">100%</option>
     </select>
-    <button id="bgYellowBtn" title="Sfondo giallo pallido per il testo" disabled>Giallo</button>
-    <button id="bgBlackBtn" title="Sfondo nero con testo bianco" disabled>Nero</button>
+    <button id="bgYellowBtn" title="Sfondo giallo pallido per il testo" disabled style="padding:4px 8px;font-size:12px">G</button>
+    <button id="bgBlackBtn" title="Sfondo nero con testo bianco" disabled style="padding:4px 8px;font-size:12px">N</button>
     <span id="title">Lettore EPUB</span>
     <span id="chapter"></span>
-  </div>
-
-  <!-- Tab: lettura / modifica HTML -->
-  <div id="tabs">
-    <button id="tabView" class="tab active">📖 Lettura</button>
-    <button id="tabEdit" class="tab" disabled>✏️ Modifica HTML</button>
-    <button id="tabEditSel" class="tab actionBtn"
-      title="Mostra l'editor in-context per il paragrafo appena cliccato nel lettore (clicca prima sul paragrafo)">✏️ Paragrafo selezionato</button>
   </div>
 
   <div id="viewer"></div>
@@ -635,11 +696,14 @@
     <div id="ieHandle" title="Trascina per spostare">☰ ☰ ☰</div>
     <div class="ieHead">
       <span id="ieTitle">Modifica paragrafo</span>
+       <button id="ieModeFrag" class="ieModeBtn" title="Modifica solo il frammento di testo cliccato">Frammento</button>
+       <button id="ieModeFull" class="ieModeBtn" title="Modifica l'intero paragrafo (HTML)">Intero</button>
        <button id="ieSave">💾 Salva</button>
        <button id="ieCancel">Annulla</button>
       <button id="ieClose" title="Chiudi (Esc)">✕</button>
     </div>
-    <textarea id="ieCode" spellcheck="false"></textarea>
+    <div id="ieFrags"></div>
+    <textarea id="ieCode" spellcheck="false" style="display:none"></textarea>
     <!--<div class="ieHint">Un elemento per riga: es. <b>&lt;p&gt;prima parte&lt;/p&gt;&lt;p&gt;seconda parte&lt;/p&gt;</b></div>-->
     <div class="ieFoot">
       <!--<button id="ieCancel">Annulla</button>
@@ -744,11 +808,15 @@
     api.listBooks = createBridgeFn("epub", "listBooks");
     api.saveChapter = createBridgeFn("epub", "saveChapter");
     api.buildEpub = createBridgeFn("epub", "buildEpub");
+    api.getPosition = createBridgeFn("epub", "getPosition");
+    api.savePosition = createBridgeFn("epub", "savePosition");
 
     // Alias identici a quelli del frontend Flask, così il resto del codice
     // (libreria, salvataggi) resta identico alla versione Python.
     function apiListBooks() { return api.listBooks(null); }
     function apiSaveChapter(payload) { return api.saveChapter(payload); }
+    function apiGetPosition(book) { return api.getPosition({ book: book }); }
+    function apiSavePosition(payload) { return api.savePosition(payload); }
 
     function setStatus(msg) {
       statusEl.textContent = msg;
@@ -856,6 +924,93 @@
       // solo il nome del file .epub relativo a gBooksDir.
       return currentBookUrl.replace(/^https?:\/\/[^/]+/i, "").replace(/^\//, "");
     }
+
+    // --- Posizione di lettura (~/.epubreader/positions.json lato Nim) ---
+    // Su ogni cambio pagina ('relocated', con debounce) salviamo CFI + href
+    // del libro corrente; all'apertura ripristiniamo la posizione salvata
+    // con fallback graduato: CFI -> href del capitolo -> inizio libro.
+    // (Stessa logica del frontend Flask, ma via bridge invece che HTTP.)
+    var posSaveTimer = null;
+    // CRITICAL: posReady gates all saving until the saved position has been
+    // restored. Without it, the initial 'relocated' fired by display() would
+    // overwrite the stored position with "page 1" BEFORE the restore
+    // completes, permanently losing the reader's last position.
+    var posReady = false;
+
+    function savePositionNow() {
+      if (!book || !rendition || !currentBookUrl) return;
+      var loc;
+      try { loc = rendition.currentLocation(); } catch (e) { return; }
+      if (!loc || !loc.start) return;
+      apiSavePosition({
+        book: bookKey(),
+        cfi: (loc.start.cfi || "") + "",
+        href: loc.start.href || "",
+        anchor: ""
+      }).catch(function () {});
+    }
+
+    // Debounced save: fires only after posReady, i.e. only for GENUINE user
+    // navigation. Every 'relocated' here reflects where the reader actually
+    // is, so persisting it guarantees the next open() restores the same spot.
+    function savePositionSoon() {
+      if (!posReady) return;
+      if (posSaveTimer) clearTimeout(posSaveTimer);
+      posSaveTimer = setTimeout(savePositionNow, 1200);
+    }
+
+    // ======================================================================
+    // POSITION RESTORATION
+    // ======================================================================
+    // On reopen, land the reader EXACTLY at the text position last seen
+    // before closing. Two-step: navigate to the chapter href FIRST (safe,
+    // no CFI), then refine with the saved CFI. Fallback ladder:
+    //   exact CFI -> chapter start -> book start.
+    // Always resolves so the open-book chain continues and buttons enable.
+    // ======================================================================
+    function restoreSavedPosition() {
+      var key = bookKey();
+      if (!key) { posReady = true; return Promise.resolve(); }
+      return apiGetPosition(key)
+        .then(function (d) {
+          var p = d && d.position;
+          if (!p || (!p.cfi && !p.href)) return Promise.resolve();
+          // STEP 1: chapter-level navigation via href (safe, no CFI involved).
+          // STEP 2: CFI refinement chained AFTER step 1.
+          var navPromise;
+          if (p.href) {
+            navPromise = rendition.display(p.href).catch(function () {});
+          } else {
+            navPromise = Promise.resolve();
+          }
+          if (p.cfi) {
+            return navPromise.then(function () {
+              try {
+                return rendition.display(p.cfi).catch(function () {});
+              } catch (e) { return Promise.resolve(); }
+            });
+          }
+          return navPromise;
+        })
+        .catch(function () { return Promise.resolve(); })
+        .then(function () { posReady = true; });
+    }
+
+    // Safety net on close: best-effort via bridge (potrebbe non completare
+    // durante l'unload, ma è un aiuto se il debounce 1.2s non è scattato).
+    window.addEventListener("beforeunload", function () {
+      if (!posReady || !book || !rendition) return;
+      try {
+        var loc = rendition.currentLocation();
+        if (!loc || !loc.start) return;
+        apiSavePosition({
+          book: bookKey(),
+          cfi: (loc.start.cfi || "") + "",
+          href: loc.start.href || "",
+          anchor: ""
+        }).catch(function () {});
+      } catch (e) {}
+    });
 
     // Percorso della voce dentro l'epub (zip: voce dell'archivio; cartella:
     // percorso relativo alla radice del pacchetto, senza il prefisso /ext/).
@@ -997,7 +1152,9 @@
       if (isFolderBook()) installArchiveShim();
       document.getElementById("reloadBtn").disabled = !isFolderBook();
       document.getElementById("metaEditBtn").disabled = !isFolderBook();
-      document.getElementById("buildBtn").disabled = !isFolderBook();
+      // PLACEHOLDER buildEpub: quando verrà riportata la costruzione EPUB,
+      // qui andava (`e andava abilitato/disabilitato`) l'elemento buildBtn:
+      //   document.getElementById("buildBtn").disabled = !isFolderBook();
       rendition = book.renderTo("viewer", {
         width: "100%",
         height: "100%",
@@ -1052,6 +1209,8 @@
 
       rendition.display().then(function () {
         setStatus("");
+        return restoreSavedPosition(); // always resolves → chain continues
+      }).then(function () {
         document.getElementById("prev").disabled = false;
         document.getElementById("next").disabled = false;
         document.getElementById("spreadToggle").disabled = false;
@@ -1074,6 +1233,8 @@
       });
 
       rendition.on("relocated", function (location) {
+        // Salva la posizione (con debounce): ogni libro ricorda la sua pagina
+        savePositionSoon();
         var label = "";
         if (location.start && location.start.href) {
           var nav = book.navigation.get(location.start.href);
@@ -1127,7 +1288,7 @@
       spreadOn = !spreadOn;
       rendition.spread(spreadOn ? "auto" : "none");
       document.getElementById("spreadToggle").textContent =
-        spreadOn ? "Una pagina" : "Due pagine";
+        spreadOn ? "📄" : "📖";
     });
 
     // Zoom browser (WebView2) applicato dal backend: qui si gestiscono stato,
@@ -1426,25 +1587,25 @@
     document.getElementById("buildReportClose").addEventListener("click", closeBuildReport);
     document.getElementById("buildReportOk").addEventListener("click", closeBuildReport);
 
-    document.getElementById("buildBtn").addEventListener("click", function () {
-      var btn = document.getElementById("buildBtn");
-      btn.disabled = true;
-      setStatus("Costruzione dell'EPUB in corso…");
-      api.buildEpub(null).then(function (res) {
-        btn.disabled = !isFolderBook();
-        if (res && res.ok) {
-          setStatus("EPUB creato ✓ (" + res.output + ")");
-        } else if (res && res.error) {
-          setStatus("Errore nella costruzione: " + res.error);
-        } else {
-          setStatus("Costruzione terminata: vedi il report.");
-        }
-        showBuildReport(res || {});
-      }).catch(function (err) {
-        btn.disabled = !isFolderBook();
-        setStatus("Errore del server: " + err);
-      });
-    });
+    // PLACEHOLDER buildEpub: il bottone buildBtn è stato rimosso dalla
+    // toolbar, quindi anche il suo handler qui è sospeso. Se in futuro la
+    // costruzione EPUB verrà riportata in Nim, ripristinare:
+    //
+    //   document.getElementById("buildBtn").addEventListener("click", function () {
+    //     var btn = document.getElementById("buildBtn");
+    //     btn.disabled = true;
+    //     setStatus("Costruzione dell'EPUB in corso…");
+    //     api.buildEpub(null).then(function (res) {
+    //       btn.disabled = !isFolderBook();
+    //       if (res && res.ok) setStatus("EPUB creato ✓ (" + res.output + ")");
+    //       else if (res && res.error) setStatus("Errore nella costruzione: " + res.error);
+    //       else setStatus("Costruzione terminata: vedi il report.");
+    //       showBuildReport(res || {});
+    //     }).catch(function (err) {
+    //       btn.disabled = !isFolderBook();
+    //       setStatus("Errore del server: " + err);
+    //     });
+    //   });
 
     // Sidebar: toggle on/off del browser del pacchetto EPUB
     document.getElementById("filesToggle").addEventListener("click", function () {
@@ -1564,10 +1725,14 @@
       // Dentro gli editor (full-chapter o popover in-context) le frecce
       // muovono il cursore, non sfogliano
       var t = e.target;
-      var isEditor = t && (t.id === "codeEditor" || t.id === "ieCode" || t.id === "metaCode");
+      // I campi frammento (.ieFrag) contano come editor: le frecce muovono il
+      // cursore e Esc chiude il popover.
+      var isFrag = t && t.classList && t.classList.contains("ieFrag");
+      var isEditor = isFrag ||
+        (t && (t.id === "codeEditor" || t.id === "ieCode" || t.id === "metaCode"));
       if (isEditor) {
         if (e.key === "Escape") {
-          if (t.id === "ieCode") closeInlineEditor();
+          if (isFrag || t.id === "ieCode") closeInlineEditor();
           else if (t.id === "metaCode") closeMetaEditor();
           else showTab("view");
         }
@@ -1666,10 +1831,8 @@
       inlineEditor.setAttribute("aria-hidden", "false");
       inlineEditor.classList.add("open");
       positionInlineEditor(inlineCtx.px, inlineCtx.py); // ri-clampa con dimensioni reali
-      ieCode.focus();
-      // Cursore alla fine del testo invece della selezione completa:
-      // così si può correggere l'ultimo carattere o digitare subito.
-      ieCode.setSelectionRange(ieCode.value.length, ieCode.value.length);
+      focusInlineField();
+      autoGrowVisibleFrags(); // il popover ora e' visibile: adatta l'altezza dei campi
       setStatus("");
     });
     document.getElementById("reloadEditor").addEventListener("click", loadEditorContent);
@@ -1771,6 +1934,7 @@
     // riposizioniamo il viewer sul paragrafo con rendition.display(cfi).
     var inlineEditor = document.getElementById("inlineEditor");
     var ieCode = document.getElementById("ieCode");
+    var ieFrags = document.getElementById("ieFrags");
     var ieSave = document.getElementById("ieSave");
     var ieCancel = document.getElementById("ieCancel");
     var ieClose = document.getElementById("ieClose");
@@ -1823,6 +1987,22 @@
       var doc = contents && contents.document;
       if (!doc || inlineBoundDocs.has(doc)) return;
       inlineBoundDocs.add(doc);
+      // Su mobile la selezione viene collassata PRIMA dell'evento click (e il
+      // menu nativo Copia/Cerca/Traduci puo' intercettare il gesto): salviamo
+      // l'ultimo Range non collassato su TUTTI gli eventi che precedono il
+      // collassamento, cosi' il popover puo' mostrare solo il frammento anche
+      // se al momento del click la selezione e' gia' vuota.
+      function snapshotSel() {
+        try {
+          var s = doc.getSelection();
+          if (s && s.rangeCount && !s.isCollapsed) {
+            doc.__lastSelRange = s.getRangeAt(0).cloneRange();
+          }
+        } catch (e) {}
+      }
+      ["selectionchange", "pointerdown", "pointerup", "touchstart", "touchend", "mouseup"].forEach(function (t) {
+        doc.addEventListener(t, snapshotSel, true);
+      });
       doc.addEventListener("click", function (e) {
         if (e.button && e.button !== 0) return;              // solo click sinistro
         // Popover aperto: i click nel libro NON devono chiuderlo ne' sostituire
@@ -1875,19 +2055,31 @@
         py: py
       };
       ieSave.disabled = false; // riabilita il pulsante tra un salvataggio e l'altro
-      // HTML grezzo del paragrafo (es. <p>testo</p>), serializzazione XML;
-      // gli LF del sorgente vengono rimossi: resta solo il wrap soft
+      // Nodi TESTO del paragrafo + snapshot originale (per ripristinare il
+      // DOM live alla chiusura senza salvataggio)
+      inlineCtx.textNodes = collectTextNodes(el);
+      inlineCtx.origFrags = inlineCtx.textNodes.map(function (n) { return n.nodeValue; });
+      // Snapshot COMPLETO (anche nodi bianchi): gli estremi di una selezione
+      // possono cadere su nodi esclusi da collectTextNodes; il ripristino alla
+      // chiusura deve coprirli tutti.
+      inlineCtx.allTextNodes = collectAllTextNodes(el);
+      inlineCtx.origAll = inlineCtx.allTextNodes.map(function (n) { return n.nodeValue; });
+      // Span ESATTO della selezione (nodi+offset), catturato PRIMA di ogni
+      // spostamento di focus che potrebbe svuotare la selezione del documento.
+      inlineCtx.selSpan = captureSelectionSpan(contents, el, ev);
+      // Nodo testo cliccato (dal caret della selezione o dal target del click)
+      inlineCtx.fragIndex = clickedTextNodeIndex(inlineCtx.textNodes, contents, el, ev);
+      // HTML grezzo del paragrafo: usato solo in modalita' "Intero"
       var html = "";
       try { html = el.outerHTML; } catch (e) { html = new XMLSerializer().serializeToString(el); }
       ieCode.value = html.replace(/\s*[\r\n]+\s*/g, " ");
+      setInlineMode(inlineCtx.textNodes.length ? "frag" : "full");
       positionInlineEditor(px, py);
       if (show !== false) {
         inlineEditor.setAttribute("aria-hidden", "false");
         inlineEditor.classList.add("open");
-        ieCode.focus();
-        // Cursore alla fine del testo invece della selezione completa:
-        // così si può correggere l'ultimo carattere o digitare subito.
-        ieCode.setSelectionRange(ieCode.value.length, ieCode.value.length);
+        focusInlineField();
+        autoGrowVisibleFrags(); // il popover ora e' visibile: adatta l'altezza
       }
     }
 
@@ -1907,8 +2099,496 @@
     function closeInlineEditor() {
       inlineEditor.classList.remove("open");
       inlineEditor.setAttribute("aria-hidden", "true");
+      if (ieFrags.contains(document.activeElement)) document.activeElement.blur();
       if (document.activeElement === ieCode) ieCode.blur(); // toglie il focus da un elemento nascosto
+      // Ripristino protetto: se inlineCtx e' gia' null (doppia chiusura,
+      // es. Salva + evento "relocated") non c'e' nulla da ripristinare.
+      var rn = null, rv = null;
+      if (inlineCtx) {
+        if (inlineCtx.allTextNodes && inlineCtx.origAll) {
+          rn = inlineCtx.allTextNodes; rv = inlineCtx.origAll;
+        } else if (inlineCtx.textNodes && inlineCtx.origFrags) {
+          rn = inlineCtx.textNodes; rv = inlineCtx.origFrags;
+        }
+      }
+      if (rn && rv) {
+        for (var i = 0; i < rn.length; i++) {
+          try { rn[i].nodeValue = rv[i]; } catch (e) {}
+        }
+      }
+      ieFrags.innerHTML = "";
+      ieCode.style.display = "none";
+      document.getElementById("ieModeFrag").classList.remove("active");
+      document.getElementById("ieModeFull").classList.remove("active");
       inlineCtx = null;
+    }
+
+    // Raccoglie i nodi testo non vuoti sotto el (TreeWalker), escludendo
+    // script/style. Solo questi verranno modificati al salvataggio: la
+    // struttura HTML del paragrafo resta intatta per costruzione.
+    function collectTextNodes(el) {
+      var nodes = [];
+      try {
+        var walker = el.ownerDocument.createTreeWalker(
+          el, NodeFilter.SHOW_TEXT, {
+            acceptNode: function (n) {
+              var p = n.parentNode;
+              var tag = p && ((p.localName || p.tagName || "") + "").toLowerCase();
+              if (tag === "script" || tag === "style") return NodeFilter.FILTER_REJECT;
+              return /^\S/.test(n.nodeValue || "")
+                ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+            }
+          });
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+      } catch (e) {}
+      return nodes;
+    }
+
+    // Indice del nodo testo cliccato: dal caret della selezione (il click
+    // viaggia nel documento iframe, quindi startContainer e' il nodo testo
+    // sotto il cursore); fallback: primo nodo testo dentro il target.
+    function clickedTextNodeIndex(textNodes, contents, el, ev) {
+      try {
+        var s = contents.document.getSelection();
+        var sc = s && s.rangeCount ? s.getRangeAt(0).startContainer : null;
+        var i = sc && sc.nodeType === 3 ? textNodes.indexOf(sc) : -1;
+        if (i >= 0) return i;
+      } catch (e) {}
+      try {
+        var t = ev && ev.target;
+        while (t) {
+          for (var k = 0; k < textNodes.length; k++) {
+            if (t === textNodes[k] || (t.contains && t.contains(textNodes[k]))) return k;
+          }
+          t = t.parentNode;
+        }
+      } catch (e) {}
+      return 0;
+    }
+
+    // Tutti i nodi testo del paragrafo SENZA il filtro sugli spazi: serve per
+    // gli estremi di una selezione, che possono cadere su nodi bianchi.
+    function collectAllTextNodes(el) {
+      var nodes = [];
+      try {
+        var walker = el.ownerDocument.createTreeWalker(
+          el, NodeFilter.SHOW_TEXT, {
+            acceptNode: function (n) {
+              var p = n.parentNode;
+              var tag = p && ((p.localName || p.tagName || "") + "").toLowerCase();
+              if (tag === "script" || tag === "style") return NodeFilter.FILTER_REJECT;
+              return NodeFilter.FILTER_ACCEPT;
+            }
+          });
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+      } catch (e) {}
+      return nodes;
+    }
+
+    // Converte un estremo di Range (nodo, offset) nel punto testo equivalente
+    // della lista ordinata "all": se il contenitore e' un elemento, prende il
+    // primo testo che inizia a o dopo il punto (start) / l'ultimo che finisce
+    // prima (end). Costanti Range: START_TO_START=0, END_TO_END=2.
+    function normTextPoint(doc, all, container, offset, isEnd) {
+      if (container.nodeType === 3) {
+        return all.indexOf(container) >= 0 ? { n: container, o: offset } : null;
+      }
+      var probe = doc.createRange();
+      try {
+        if (isEnd) probe.setEnd(container, offset);
+        else probe.setStart(container, offset);
+      } catch (err) { return null; }
+      for (var i = 0; i < all.length; i++) {
+        var tn = all[i];
+        var tp = doc.createRange();
+        try { tp.selectNodeContents(tn); } catch (e2) { continue; }
+        var cmp = probe.compareBoundaryPoints(isEnd ? 2 : 0, tp);
+        if (!isEnd && cmp <= 0) return { n: tn, o: 0 };
+        if (isEnd && cmp >= 0) return { n: tn, o: (tn.nodeValue || "").length };
+      }
+      return null;
+    }
+
+    // Cattura la selezione corrente del documento iframe come SPAN ESATTO:
+    // nodi testo + offset di inizio/fine e stringa selezionata. Null se la
+    // selezione e' vuota, fuori dal paragrafo o senza testo utile. Gli estremi
+    // fuori dal blocco vengono clampati ai bordi del paragrafo stesso.
+    function captureSelectionSpan(contents, el, ev) {
+      try {
+        var doc = contents.document;
+        var sel = doc.getSelection();
+        var r = (sel && sel.rangeCount && !sel.isCollapsed) ? sel.getRangeAt(0) : null;
+        // Mobile: la selezione e' stata gia' collassata dal tap. Se esiste una
+        // selezione salvata da selectionchange e il punto del click cade DENTRO
+        // quella selezione, usiamo quella invece di rinunciare al frammento.
+        if (!r && ev && typeof ev.clientX === "number") {
+          var saved = doc.__lastSelRange;
+          if (saved) {
+            try {
+              // La selezione salvata deve riguardare QUESTO paragrafo...
+              if (!(saved.startContainer === el || el.contains(saved.startContainer))) { saved = null; }
+            } catch (e2) { saved = null; }
+          }
+          if (saved) {
+            try {
+              // Punto esatto del tap (se ricavabile): basta che cada dentro
+              // la selezione salvata O nel suo bounding rect (margine 12px
+              // per imprecisione del tocco e maniglie di selezione).
+              if (doc.caretRangeFromPoint) pt = doc.caretRangeFromPoint(ev.clientX, ev.clientY);
+              else if (doc.caretPositionFromPoint) {
+                var cp = doc.caretPositionFromPoint(ev.clientX, ev.clientY);
+                if (cp) { pt = doc.createRange(); pt.setStart(cp.offsetNode, cp.offset); pt.collapse(true); }
+              }
+              var hit = false;
+              try { if (pt && saved.comparePoint(pt.startContainer, pt.startOffset) === 0) hit = true; } catch (e3) {}
+              if (!hit) {
+                var rc = saved.getBoundingClientRect();
+                var M = 12;
+                if (rc && rc.width + rc.height > 0 &&
+                    ev.clientX >= rc.left - M && ev.clientX <= rc.right + M &&
+                    ev.clientY >= rc.top - M && ev.clientY <= rc.bottom + M) hit = true;
+              }
+              if (hit) r = saved;
+            } catch (e4) {}
+          }
+        }
+        if (!r) return null;
+        var sc = r.startContainer, so = r.startOffset;
+        var ec = r.endContainer, eo = r.endOffset;
+        var inS = sc === el || el.contains(sc);
+        var inE = ec === el || el.contains(ec);
+        if (!inS && !inE) return null;             // selezione altrove
+        if (!inS) { sc = el; so = 0; }             // parte prima del paragrafo
+        if (!inE) { ec = el; eo = el.childNodes ? el.childNodes.length : 0; } // finisce dopo
+        var all = collectAllTextNodes(el);
+        if (!all.length) return null;
+        var s = normTextPoint(doc, all, sc, so, false);
+        var e = normTextPoint(doc, all, ec, eo, true);
+        if (!s || !e) {
+          // Ultimo fallback (mobile): nessuna selezione recuperabile, ma dal
+          // punto del tap conosciamo il caret -> estraiamo la FRASE cliccata.
+          var sent = captureSentenceAtPoint(doc, all, ev, el);
+          if (sent) return sent;
+          return null;
+        }
+        var si = all.indexOf(s.n), ei = all.indexOf(e.n);
+        if (si > ei || (si === ei && e.o <= s.o)) return null; // span degenerato
+        var parts = [];
+        for (var i = si; i <= ei; i++) {
+          var v = all[i].nodeValue || "";
+          var seg = v.slice(i === si ? s.o : 0, i === ei ? e.o : v.length);
+          if (seg) parts.push(seg);
+        }
+        var text = parts.join("").replace(/\s*[\r\n]+\s*/g, " ");
+        if (!text.trim()) return null;
+        return { sNode: s.n, sOff: s.o, eNode: e.n, eOff: e.o, text: text };
+      } catch (err) { return null; }
+    }
+
+    // Estrae la frase di testo cliccata usando SOLO le coordinate del tap:
+    // trova il caret, poi espande ai confini di frase (.!?… seguito da spazio/
+    // fine) dentro lo stesso nodo testo. Ritorna lo stesso formato dello span
+    // di selezione ({ sNode, sOff, eNode, eOff, text }) cosi' l'editing e il
+    // salvataggio restano identici.
+    function captureSentenceAtPoint(doc, all, ev, el) {
+      try {
+        var pt = null;
+        if (ev && typeof ev.clientX === "number") {
+          if (doc.caretRangeFromPoint) pt = doc.caretRangeFromPoint(ev.clientX, ev.clientY);
+          else if (doc.caretPositionFromPoint) {
+            var cp = doc.caretPositionFromPoint(ev.clientX, ev.clientY);
+            if (cp) { pt = doc.createRange(); pt.setStart(cp.offsetNode, cp.offset); pt.collapse(true); }
+          }
+        }
+        if (!pt || pt.startContainer.nodeType !== 3) return null;
+        var tn = pt.startContainer;
+        if (!(tn === el || el.contains(tn))) return null;
+        var txt = String(tn.nodeValue || "");
+        var i = Math.min(Math.max(pt.startOffset, 0), txt.length);
+        // Se il tap e' subito dopo un terminatore, arretra sull'ultima parola
+        while (i > 0 && /[.!?…\s]/.test(txt[i - 1]) && !/[.!?…]/.test(txt[i] || "")) i--;
+        var a = i, b = i;
+        while (a > 0 && !/[.!?…]\s/.test(txt.slice(Math.max(0, a - 2), a)) ) {
+          if (a > 1 && /[.!?…]/.test(txt[a - 2]) && /\s/.test(txt[a - 1])) { a--; break; }
+          a--;
+        }
+        var n = txt.length;
+        while (b < n) {
+          if (b >= 1 && /[.!?…]/.test(txt[b - 1]) && (/\s/.test(txt[b]) || b === n)) break;
+          if (b === n - 1 && /[.!?…]/.test(txt[b])) { b++; break; }
+          b++;
+        }
+        while (a < b && /\s/.test(txt[a])) a++;      // taglia spazi ai bordi
+        while (b > a && /\s/.test(txt[b - 1])) b--;
+        if (b - a < 1) return null;
+        return { sNode: tn, sOff: a, eNode: tn, eOff: b, text: txt.slice(a, b) };
+      } catch (err) { return null; }
+    }
+
+    // Testo CORRENTE dello span letto dal DOM live (offsets aggiornati da
+    // applySelField restano coerenti con i nodeValue mutati).
+    function currentSpanText(sp) {
+      try {
+        var all = inlineCtx.allTextNodes || [];
+        var si = all.indexOf(sp.sNode), ei = all.indexOf(sp.eNode);
+        if (si < 0 || ei < 0) return "";
+        var parts = [];
+        for (var i = si; i <= ei; i++) {
+          var v = all[i].nodeValue || "";
+          parts.push(v.slice(i === si ? sp.sOff : 0, i === ei ? sp.eOff : v.length));
+        }
+        return parts.join("").replace(/\s*[\r\n]+\s*/g, " ");
+      } catch (e) { return ""; }
+    }
+
+    // CRITICAL FIX (pageno anchors): strips paper-edition page markers
+    // (<a class="pageno" title="[Pg N]"></a>, tipici degli EPUB di Project
+    // Gutenberg) dalla outerHTML di un paragrafo. Queste ancora sono GIA' nel
+    // file sorgente come figli di quasi ogni <p>; sono vuote e invisibili
+    // durante la lettura, ma finivano nella vista "Intero" dell'editor e in
+    // ogni capitolo salvato, sembrando inserzioni spurie. Il parsing passa da
+    // DOMParser invece che da regex cosi' variazioni di ordine/spacing degli
+    // attributi sono gestite in sicurezza. Applicato a ogni punto in cui
+    // l'HTML del paragrafo entra in ieCode o nel pipeline di salvataggio.
+    function stripPagenoAnchors(html) {
+      try {
+        var d = new DOMParser().parseFromString("<div>" + html + "</div>", "text/html");
+        var as = d.querySelectorAll("a.pageno, a[id^='Page_']");
+        for (var i = 0; i < as.length; i++) {
+          if (as[i].parentNode) as[i].parentNode.removeChild(as[i]);
+        }
+        var p = d.body && d.body.firstElementChild;
+        return p ? p.innerHTML : html;
+      } catch (e) { return html; }
+    }
+
+    // Modalita' del popover: "frag" = solo il pezzo cliccato, "full" =
+    // l'intero paragrafo in HTML (come prima). Da frammento a intero applica
+    // l'edit corrente al nodo testo, cosi' resta nella serializzazione.
+    function setInlineMode(mode) {
+      if (!inlineCtx) return;
+      var hasFrags = !!(inlineCtx.textNodes && inlineCtx.textNodes.length);
+      // Se il frammento contiene markup invalido restiamo in modalita'
+      // Frammento cosi' l'utente puo' correggerlo senza perdere l'edit.
+      if (mode === "full" && inlineCtx.mode === "frag" && hasFrags && !applyFragField()) return;
+      inlineCtx.mode = hasFrags ? mode : "full";
+      document.getElementById("ieModeFrag").classList.toggle("active", inlineCtx.mode === "frag");
+      document.getElementById("ieModeFull").classList.toggle("active", inlineCtx.mode === "full");
+      if (inlineCtx.mode === "frag" && hasFrags) {
+        renderFragField();
+        ieFrags.style.display = "flex";
+        ieCode.style.display = "none";
+        autoGrowVisibleFrags(); // se il popover e' gia' visibile, adatta l'altezza
+      } else {
+        // Intero (o paragrafo senza nodi testo): HTML grezzo come prima.
+        // stripPagenoAnchors tiene fuori i marker pageno da editor/salvataggio.
+        ieFrags.style.display = "none";
+        ieCode.style.display = "block";
+        try {
+          ieCode.value = stripPagenoAnchors(inlineCtx.element.outerHTML.replace(/\s*[\r\n]+\s*/g, " "));
+        } catch (e) {}
+      }
+    }
+
+    // Un SOLO campo: lo span ESATTO della selezione (se presente), altrimenti
+    // il nodo testo cliccato per intero. Gli altri pezzi restano invisibili.
+    function renderFragField() {
+      ieFrags.innerHTML = "";
+      var row = document.createElement("div");
+      row.className = "fragItem";
+      var idx = document.createElement("span");
+      idx.className = "fragIdx";
+      var ta = document.createElement("textarea");
+      ta.className = "ieFrag";
+      ta.spellcheck = false;
+      if (inlineCtx.selSpan) {
+        // Selezione trascinata: solo i caratteri evidenziati, anche se
+        // attraversano tag inline (i/b/em...): gli estremi sono nodo+offset.
+        ta.dataset.span = "1";
+        delete ta.dataset.fragIndex;
+        ta.value = currentSpanText(inlineCtx.selSpan);
+        idx.textContent = "sel \u00b7 " + ta.value.length + " car.";
+      } else {
+        var i = inlineCtx.fragIndex || 0;
+        var node = inlineCtx.textNodes[i];
+        delete ta.dataset.span;
+        ta.dataset.fragIndex = String(i);
+        ta.value = String(node.nodeValue || "").replace(/\s*[\r\n]+\s*/g, " ");
+        idx.textContent = (i + 1) + "/" + inlineCtx.textNodes.length;
+      }
+      autoGrowFrag(ta);
+      ta.addEventListener("input", function () { autoGrowFrag(ta); });
+      row.appendChild(idx);
+      row.appendChild(ta);
+      ieFrags.appendChild(row);
+    }
+
+    // Riscrive il valore del campo nel DOM live. Se il valore contiene
+    // markup (<i>…</i> e simili) viene validato come XML e il nodo testo viene
+    // SOSTITUITO con i nodi parsati; altrimenti aggiorna solo nodeValue.
+    // CRITICAL: un nodo testo non puo' mai contenere elementi — scrivere
+    // "...<i>x</i>" via nodeValue salverebbe tag letterali che serializzano
+    // come &lt;i&gt; e non rendono mai. Ritorna false su markup invalido
+    // (DOM intatto) cosi' i chiamanti interrompono cambio modalita'/salvataggio.
+    function applyFragField() {
+      var ta = ieFrags.querySelector("textarea.ieFrag");
+      if (!ta || !inlineCtx) return true;
+      var val = ta.value.replace(/\s*[\r\n]+\s*/g, " ");
+      if (ta.dataset && ta.dataset.span === "1") {
+        // Selection-span path needs markup handling too: applySelField writes
+        // plain text into nodeValue, so typed tags would end up as escaped
+        // literals (&lt;i&gt;) that never render. Strategy: pre-validate ONLY
+        // the typed markup (an invalid fragment never touches the DOM), apply
+        // the edit as text, then re-parse the node content and replace it with
+        // real element nodes.
+        if (/</.test(val)) {
+          if (!parseMarkupFragment(val, inlineCtx.doc)) {
+            setStatus("Markup invalido o tag non ammesso nel frammento (consentiti: <i> <em> <b> <strong> <u>; devono essere bilanciati).");
+            return false;
+          }
+          applySelField(val);
+          var sn = inlineCtx.selSpan && inlineCtx.selSpan.sNode;
+          if (sn && /</.test(String(sn.nodeValue)) && !replaceTextNodeWithMarkup(sn, String(sn.nodeValue))) return false;
+        } else {
+          applySelField(val);
+        }
+        return true;
+      }
+      if (!inlineCtx.textNodes) return true;
+      var node = inlineCtx.textNodes[parseInt(ta.dataset.fragIndex, 10) || 0];
+      if (!node) return true;
+      if (/</.test(val)) {
+        if (!replaceTextNodeWithMarkup(node, val)) {
+          setStatus("Markup invalido o tag non ammesso nel frammento (consentiti: <i> <em> <b> <strong> <u>; devono essere bilanciati).");
+          return false;
+        }
+        return true;
+      }
+      try { node.nodeValue = val; } catch (e) {}
+      return true;
+    }
+
+    // Valida 'val' come frammento XML nel namespace del documento del capitolo,
+    // ammette solo tag inline di formattazione semplice (i, em, b, strong, u),
+    // poi sostituisce 'node' con i nodi importati nel documento live.
+    function parseMarkupFragment(val, doc) {
+      try {
+        var ns = (doc.documentElement && doc.documentElement.namespaceURI) || "http://www.w3.org/1999/xhtml";
+        var wrap = '<wrap xmlns="' + ns + '">' + val + '</wrap>';
+        var parsed = new DOMParser().parseFromString(wrap, "application/xml");
+        if (parsed.getElementsByTagName("parsererror").length) return null;
+        // Whitelist: solo formattazione inline, nessun attributo arbitrario.
+        var allowed = { i: 1, em: 1, b: 1, strong: 1, u: 1 };
+        var els = parsed.documentElement.getElementsByTagName("*");
+        for (var k = 0; k < els.length; k++) {
+          var ln = (els[k].localName || "").toLowerCase();
+          if (!allowed[ln]) return null;
+          if (els[k].attributes && els[k].attributes.length) return null;
+        }
+        return parsed;
+      } catch (e) { return null; }
+    }
+
+    function replaceTextNodeWithMarkup(node, val) {
+      try {
+        var doc = node.ownerDocument;
+        var parsed = parseMarkupFragment(val, doc);
+        if (!parsed) return false;
+        // importNode is mandatory: DOMParser nodes belong to a different
+        // document than the live chapter (wrongDocumentError otherwise).
+        var frag = doc.createDocumentFragment();
+        var kids = Array.prototype.slice.call(parsed.documentElement.childNodes);
+        for (var j = 0; j < kids.length; j++) frag.appendChild(doc.importNode(kids[j], true));
+        if (!frag.firstChild) return false; // niente di concreto da inserire
+        // Nodi testo risultanti (profondità inclusa) per tenere gli array
+        // di navigazione/ripristino allineati alla nuova struttura.
+        var newTN = [];
+        (function walk(n) {
+          for (var c = n.firstChild; c; c = c.nextSibling) {
+            if (c.nodeType === 3) newTN.push(c);
+            else if (c.nodeType === 1) walk(c);
+          }
+        })(frag);
+        node.parentNode.replaceChild(frag, node);
+        var tn = inlineCtx.textNodes || [];
+        var idx = tn.indexOf(node);
+        if (idx >= 0 && newTN.length) {
+          var args = [idx, 1].concat(newTN);
+          Array.prototype.splice.apply(tn, args);
+          if (inlineCtx.origFrags) {
+            var vals = newTN.map(function (n2) { return n2.nodeValue || ""; });
+            Array.prototype.splice.apply(inlineCtx.origFrags, [idx, 1].concat(vals));
+          }
+          var all = inlineCtx.allTextNodes || [];
+          var aidx = all.indexOf(node);
+          if (aidx >= 0) {
+            Array.prototype.splice.apply(all, [aidx, 1].concat(newTN));
+            if (inlineCtx.origAll) {
+              var vals2 = newTN.map(function (n3) { return n3.nodeValue || ""; });
+              Array.prototype.splice.apply(inlineCtx.origAll, [aidx, 1].concat(vals2));
+            }
+          }
+        }
+        return true;
+      } catch (e) { return false; }
+    }
+
+    // Scrive la stringa editata DENTRO lo span selezionato: head resta prima,
+    // tail resta dopo, l'edited occupa esattamente lo spazio della selezione
+    // (anche su piu' nodi: i nodi intermedi coperti vengono svuotati).
+    // Aggiorna selSpan in modo che una seconda applicazione sia idempotente.
+    function applySelField(edited) {
+      var sp = inlineCtx.selSpan;
+      if (!sp || !sp.sNode) return;
+      var sN = sp.sNode, eN = sp.eNode;
+      var head = String(sN.nodeValue || "").slice(0, sp.sOff);
+      var tail = String((sN === eN ? sN : eN).nodeValue || "").slice(sp.eOff);
+      try {
+        if (sN === eN) {
+          sN.nodeValue = head + edited + tail;
+        } else {
+          sN.nodeValue = head + edited;   // tutto l'edited vive nel nodo iniziale
+          var all = inlineCtx.allTextNodes || [];
+          var si = all.indexOf(sN), ei = all.indexOf(eN);
+          for (var k = si + 1; k < ei; k++) { if (all[k]) all[k].nodeValue = ""; }
+          eN.nodeValue = tail;
+          sp.eNode = sN;                  // lo span ora sta tutto in sN
+        }
+        sp.sOff = head.length;
+        sp.eOff = head.length + edited.length;
+        sp.text = edited;
+      } catch (e) {}
+    }
+
+    // Focus + cursore in fondo al campo attivo (frammento o HTML intero)
+    function focusInlineField() {
+      var f = (inlineCtx && inlineCtx.mode === "frag")
+        ? ieFrags.querySelector("textarea.ieFrag")
+        : ieCode;
+      if (!f) return;
+      f.focus();
+      if (f.setSelectionRange) f.setSelectionRange(f.value.length, f.value.length);
+    }
+
+    // Altezza del campo frammento in funzione del contenuto: una riga minima,
+    // cresce fino a 12 righe (oltre, scrolla). Se il popover e' ancora nascosto
+    // (display:none sull'antenato) scrollHeight non e' affidabile: in quel caso
+    // salta, il ricalcolo avviene con autoGrowVisibleFrags alla visibilita'.
+    function autoGrowFrag(ta) {
+      if (!ta.closest("#inlineEditor.open")) return;
+      ta.style.height = "auto";
+      var lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+      var h = Math.min(Math.max(ta.scrollHeight, lh * 1.6), lh * 12);
+      ta.style.height = h + "px";
+    }
+
+    // Ricalcola l'altezza dei campi frammento DOPO che il popover e' diventato
+    // visibile (il layout deve essere rifatto prima di misurare scrollHeight).
+    function autoGrowVisibleFrags() {
+      requestAnimationFrame(function () {
+        var tas = ieFrags.querySelectorAll("textarea.ieFrag");
+        for (var i = 0; i < tas.length; i++) autoGrowFrag(tas[i]);
+      });
     }
 
     // Patch dell'archive in memoria: per quel path il prossimo request
@@ -2052,6 +2732,18 @@
     ieSave.addEventListener("click", function () {
       if (!inlineCtx || !book || !currentBookUrl) return;
       var ctx = inlineCtx;
+      // Modalita' frammento: applica l'edit al SUO nodo testo e riserializza
+      // il paragrafo dal DOM live (tag e attributi restano intatti).
+      if (ctx.mode !== "full" && ctx.textNodes && ctx.textNodes.length) {
+        // Markup invalido nel frammento: blocca il salvataggio, nulla è
+        // stato scritto nel DOM live.
+        if (!applyFragField()) return;
+        // Save path: re-serialize the paragraph from the live DOM, with
+        // pageno anchors stripped so they never land in the saved EPUB.
+        try {
+          ieCode.value = stripPagenoAnchors(ctx.element.outerHTML.replace(/\s*[\r\n]+\s*/g, " "));
+        } catch (e) {}
+      }
       var newHtml = ieCode.value.trim();
       if (!newHtml) { setStatus("HTML vuoto: inserisci un elemento."); return; }
       ieSave.disabled = true;
@@ -2099,6 +2791,16 @@
           ieSave.disabled = false;
           setStatus("Errore: " + (err && err.message ? err.message : err));
         });
+    });
+
+    // Toggle delle due modalita' di editing del popover
+    document.getElementById("ieModeFrag").addEventListener("click", function () {
+      setInlineMode("frag");
+      focusInlineField();
+    });
+    document.getElementById("ieModeFull").addEventListener("click", function () {
+      setInlineMode("full");
+      focusInlineField();
     });
 
     ieCancel.addEventListener("click", closeInlineEditor);

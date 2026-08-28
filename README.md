@@ -150,6 +150,20 @@ The **📦 Build EPUB** button assembles a well-formatted EPUB from the
 translated folder (STORED mimetype, German fallback for untranslated
 chapters, dc:language → it).
 
+### Reading position (per book)
+
+Each book remembers where you stopped reading. On every page change the
+reader saves the current CFI + href (debounced 1.2s, plus a best-effort
+save on close); on reopen it restores the exact spot with a graceful
+fallback ladder: **CFI → chapter href → book start**.
+
+Positions are stored per-book in `~/.epubreader/positions.json` (same
+location as the Flask/Python version, `_load_positions`/`save_position`),
+so the data is shared between the two frontends. The backend writes
+atomically (`.tmp` + move), like `saveChapter`; saving is gated by a
+`posReady` flag so the initial `relocated` event never overwrites the
+stored position with “page 1”.
+
 ### Navigation
 
 - **‹ Previous / Next ›** buttons

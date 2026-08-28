@@ -26,7 +26,7 @@
 import
   miowv,
   winim,
-  std/[json, os, strutils, xmlparser, xmltree, algorithm, tables],
+  std/[json, os, strutils, times, xmlparser, xmltree, algorithm, tables],
   zippy/ziparchives
 
 # ------------------------------------------------------------------
@@ -281,8 +281,79 @@ proc saveChapterIntoEpub(bookPath, href, content: string): string =
   return ""
 
 # ------------------------------------------------------------------
+# Posizione di lettura per libro (~/.epubreader/positions.json)
+# ------------------------------------------------------------------
+# Stessa posizione della versione Python (app.py e _load/_save positions):
+# una mappa {book_key: {cfi, href, anchor, updated}} dove ogni libro ricorda
+# la sua posizione indipendentemente dagli altri. Scrittura atomica
+# (.tmp + moveFile), come saveChapter.
+proc positionsFile(): string =
+  let dir = getHomeDir() / ".epubreader"
+  try:
+    createDir(dir)
+  except CatchableError:
+    discard
+  result = dir / "positions.json"
+
+proc loadPositions(): JsonNode =
+  ## Legge positions.json; ritorna {} se assente o corrotto (app.py: _load_positions).
+  result = newJObject()
+  if fileExists(positionsFile()):
+    try:
+      let data = parseJson(readFile(positionsFile()))
+      if data.kind == JObject:
+        result = data
+    except CatchableError:
+      discard
+
+proc savePositionToFile(book, cfi, href, anchor: string): string =
+  ## Salva la posizione di lettura di `book` in positions.json
+  ## (scrittura atomica .tmp + moveFile). Ritorna "" in caso di successo,
+  ## altrimenti un messaggio d'errore.
+  let positions = loadPositions()
+  let pos = %*{
+    "cfi": cfi,
+    "href": href,
+    "anchor": anchor[0 ..< min(100, anchor.len)],
+    "updated": now().format("yyyy-MM-dd'T'HH:mm:ss")
+  }
+  positions[book] = pos
+  let file = positionsFile()
+  let tmp = file & ".tmp"
+  try:
+    writeFile(tmp, $positions)
+    moveFile(tmp, file)
+  except CatchableError as e:
+    try:
+      if fileExists(tmp): removeFile(tmp)
+    except CatchableError:
+      discard
+    return "Errore durante la scrittura: " & e.msg
+  return ""
+
+proc validBookKey(book: string): bool =
+  ## True se `book` è una chiave libro valida (stessa regola di
+  ## _valid_book_key in app.py): "ext", "extepub:N" o basename .epub.
+  if book.len == 0: return false
+  if book.strip(chars = {'/'}) == FOLDER_BOOK_KEY: return true
+  # extepub:N
+  if book.startsWith("extepub:") and book.len > "extepub:".len:
+    if book["extepub:".len .. ^1].allCharsInSet(Digits): return true
+  # basename .epub (niente path, niente traversal)
+  if book == extractFilename(book) and "/" notin book and
+     "\\" notin book and ".." notin book and
+     book.toLowerAscii().endsWith(".epub"):
+    return true
+  return false
+
+# ------------------------------------------------------------------
 # Bridge JS <-> Nim
 # ------------------------------------------------------------------
+proc invokeCallback(w: Webview; cbId: string; payload: JsonNode) =
+  ## Inoltra il risultato di una chiamata bridge al callback JS.
+  let js = "window._nimCallbacks[" & cbId & "](" & $payload & ")"
+  w.eval(js)
+
 proc handleBridge(w: Webview; arg: cstring) =
   ## Callback invocato dal JavaScript via window.chrome.webview.postMessage.
   try:
@@ -322,6 +393,30 @@ proc handleBridge(w: Webview; arg: cstring) =
       let res = %*{"ok": err.len == 0, "error": err}
       let js = "window._nimCallbacks[" & cbId & "](" & $res & ")"
       w.eval(js)
+    of "getPosition":
+      # Ritorna la posizione salvata per un libro: {ok, position} con position
+      # = {cfi, href, anchor, updated} oppure null se assente (app.py: get_position).
+      let book = args["book"].getStr()
+      if not validBookKey(book):
+        invokeCallback(w, cbId, %*{"ok": false, "error": "Nome libro non valido"})
+      else:
+        let positions = loadPositions()
+        let pos =
+          if positions.hasKey(book) and positions[book].kind == JObject:
+            positions[book]
+          else:
+            newJNull()
+        invokeCallback(w, cbId, %*{"ok": true, "position": pos})
+    of "savePosition":
+      # Salva la posizione di lettura di un libro (scrittura atomica su
+      # positions.json). (app.py: save_position)
+      let book = args["book"].getStr()
+      if not validBookKey(book):
+        invokeCallback(w, cbId, %*{"ok": false, "error": "Nome libro non valido: " & book})
+      else:
+        let err = savePositionToFile(book, args["cfi"].getStr(),
+                                     args["href"].getStr(), args["anchor"].getStr())
+        invokeCallback(w, cbId, %*{"ok": err.len == 0, "error": err})
     of "setZoom":
       # Zoom browser (WebView2) applicato dal backend: la pagina intera viene
       # zoomata; il frontend contro-ruota toolbar/sidebar e rifluisce con
