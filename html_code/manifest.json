@@ -1,0 +1,11 @@
+{
+  "name": "Lettore EPUB",
+  "short_name": "EPUB",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#2b2b2b",
+  "theme_color": "#3a3a3a",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

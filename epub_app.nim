@@ -26,7 +26,7 @@
 import
   miowv,
   winim,
-  std/[json, os, strutils, times, xmlparser, xmltree, algorithm, tables],
+  std/[json, os, strutils, times, xmlparser, xmltree, algorithm, tables, sequtils],
   zippy/ziparchives
 
 # ------------------------------------------------------------------
@@ -38,12 +38,62 @@ const
   HOST_ACCESS_ALLOW = 1         # COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND::ALLOW
   # Epub NON impacchettato (output del translator): cartella mappata su
   # https://ext/ e mostrata come primo libro in Libreria (come --book-dir
-  # di app.py). Modifica qui il percorso se il translator scrive altrove.
+  # di app.py). Default se ~/.epubreader/config.ini manca o e' illeggibile.
   FOLDER_HOST* = "ext"
   FOLDER_BOOK_DIR* = r"C:\Users\pr30565\Desktop\python\translator\target"
   # Chiave usata dal frontend per identificare il libro-cartella nei payload
   # di saveChapter (corrisponde a FOLDER_BOOK_KEY di app.py).
   FOLDER_BOOK_KEY* = "ext"
+
+# ------------------------------------------------------------------
+# Configurazione utente ~/.epubreader/config.ini (come _load_config in app.py)
+# ------------------------------------------------------------------
+proc configFilePath(): string =
+  result = getHomeDir() / ".epubreader" / "config.ini"
+
+proc expandUser(p: string): string =
+  ## Espande "~" iniziale alla home (come os.path.expanduser).
+  if p.startsWith("~"):
+    result = getHomeDir() & p[1 .. ^1]
+  else:
+    result = p
+
+proc loadUserConfig(): tuple[bookDir: string, epubFiles: seq[string]] =
+  ## Legge [paths] book_dir + epub_files (lista separata da virgole).
+  ## Crea il file con i default se assente. Fallback ai default se illeggibile.
+  result = (bookDir: FOLDER_BOOK_DIR, epubFiles: @[])
+  let cfg = configFilePath()
+  try:
+    createDir(parentDir(cfg))
+  except CatchableError:
+    discard
+  if not fileExists(cfg):
+    try:
+      writeFile(cfg, "[paths]\nbook_dir = " & FOLDER_BOOK_DIR & "\nepub_files = \n")
+    except CatchableError:
+      discard
+    return
+  try:
+    var inPaths = false
+    var epubFilesDir = ""
+    for rawLine in readFile(cfg).splitLines():
+      let line = rawLine.strip()
+      if line.startsWith("["):
+        inPaths = line.toLowerAscii() == "[paths]"
+      elif inPaths and "=" in line:
+        let parts = line.split("=", maxsplit = 1)
+        let k = parts[0].strip().toLowerAscii()
+        let v = parts[1].strip()
+        if k == "book_dir":
+          result.bookDir = expandUser(v)
+        elif k == "epub_files_dir":
+          epubFilesDir = expandUser(v)
+        elif k == "epub_files":
+          result.epubFiles = v.split(",").mapIt(expandUser(it.strip())).filterIt(it.len > 0)
+          if epubFilesDir.len > 0:
+            result.epubFiles = result.epubFiles.mapIt(joinPath(epubFilesDir, it))
+  except CatchableError:
+    result = (bookDir: FOLDER_BOOK_DIR, epubFiles: @[])
 
 # ------------------------------------------------------------------
 # Estrazione del titolo dall'OPF (stesso metodo di app.py con zipfile)
@@ -191,8 +241,67 @@ proc saveChapterIntoFolder(root, href, content: string): string =
   return ""
 
 # ------------------------------------------------------------------
-# Elenco dei libri nella cartella epubs/ (e dell'epub da cartella)
+# Stato globale + elenco dei libri (cartella epubs/ + epub da cartella)
 # ------------------------------------------------------------------
+var
+  gFrontendDir: string # cartella html_code/ servita su https://appassets/ (frontend)
+  gBooksDir: string    # cartella con i file .epub (mappata su https://books/)
+  gFolderDir: string   # cartella esterna con l'epub non impacchettato (https://ext/)
+  gExtEpubs: seq[string] = @[] # epub esterni da config.ini (epub_files), come EPUB_FILES in app.py
+
+proc stagedExtName(idx: int): string =
+  ## Nome dello staging in epubs/ per l'epub esterno N (visto dal frontend
+  ## come bookKey "__extN__.epub", servito su https://books/).
+  result = "__ext" & $idx & "__.epub"
+
+proc extIndexFromKey(book: string): int =
+  ## "extepub:N" o "__extN__.epub" -> N, altrimenti -1.
+  result = -1
+  if book.startsWith("extepub:"):
+    try:
+      result = parseInt(book["extepub:".len .. ^1])
+    except ValueError:
+      discard
+  elif book.startsWith("__ext") and book.endsWith("__.epub"):
+    try:
+      result = parseInt(book["__ext".len .. ^(7)])
+    except ValueError:
+      discard
+
+proc validBookKey(book: string): bool =
+  ## True se `book` è una chiave libro valida (stessa regola di
+  ## _valid_book_key in app.py): "ext", "extepub:N"/staging "__extN__.epub"
+  ## o basename .epub.
+  if book.len == 0: return false
+  if book.strip(chars = {'/'}) == FOLDER_BOOK_KEY: return true
+  if extIndexFromKey(book) >= 0: return true
+  # basename .epub (niente path, niente traversal)
+  if book == extractFilename(book) and "/" notin book and
+     "\\" notin book and ".." notin book and
+     book.toLowerAscii().endsWith(".epub"):
+    return true
+  return false
+
+proc stageExtEpubs() =
+  ## Copia ogni epub esterno in epubs/__extN__.epub cosi' il virtual host
+  ## https://books/ puo' servirlo (WebView2 mappa cartelle, non singoli file).
+  for idx, epubPath in gExtEpubs:
+    if not fileExists(epubPath): continue
+    let dest = gBooksDir / stagedExtName(idx)
+    try:
+      if not fileExists(dest) or getFileSize(dest) != getFileSize(epubPath):
+        copyFile(epubPath, dest)
+    except CatchableError as e:
+      echo "[epub] AVVISO: staging epub esterno fallito: ", epubPath, ": ", e.msg
+
+proc writeThroughExt(idx: int) =
+  ## Dopo un salvataggio nello staging, ricopia __extN__.epub sull'originale.
+  if idx < 0 or idx >= gExtEpubs.len: return
+  try:
+    copyFile(gBooksDir / stagedExtName(idx), gExtEpubs[idx])
+  except CatchableError as e:
+    echo "[epub] AVVISO: write-through epub esterno fallito: ", e.msg
+
 proc listEpubBooks*(dir, folderDir: string): seq[JsonNode] =
   result = @[]
   # 1) Epub NON impacchettato (output del translator) come primo libro:
@@ -209,13 +318,28 @@ proc listEpubBooks*(dir, folderDir: string): seq[JsonNode] =
       "type":  "folder"
     })
 
-  # 2) File .epub nella cartella libri (https://books/)
+  # 2) Epub esterni da config.ini (epub_files), come /api/books in app.py.
+  #    Serviti dallo staging __extN__.epub in epubs/ (vedi stageExtEpubs).
+  for idx, epubPath in gExtEpubs:
+    if not fileExists(epubPath): continue
+    let label = extractFilename(epubPath)
+    let t = epubTitle(epubPath)
+    result.add(%*{
+      "name":  "extepub:" & $idx,
+      "title": (if t.len > 0: t else: splitFile(label).name),
+      "url":   "https://" & BOOKS_HOST & "/" & stagedExtName(idx),
+      "size":  getFileSize(epubPath),
+      "type":  "extepub"
+    })
+
+  # 3) File .epub nella cartella libri (https://books/), escluso lo staging
   if not dirExists(dir):
     echo "[epub] Cartella non trovata: ", dir
     return
   for name in walkDir(dir, relative = true):
     let lower = name.path.toLowerAscii()
     if not (name.kind == pcFile and lower.endsWith(".epub")): continue
+    if name.path.startsWith("__ext") and name.path.endsWith("__.epub"): continue
     let full = dir / name.path
     let title = epubTitle(full)
     let display = if title.len > 0: title else: splitFile(name.path).name
@@ -233,11 +357,6 @@ proc listEpubBooks*(dir, folderDir: string): seq[JsonNode] =
 # ------------------------------------------------------------------
 # Salvataggio di un file modificato dentro l'epub
 # ------------------------------------------------------------------
-var
-  gFrontendDir: string # cartella html_code/ servita su https://appassets/ (frontend)
-  gBooksDir: string    # cartella con i file .epub (mappata su https://books/)
-  gFolderDir: string   # cartella esterna con l'epub non impacchettato (https://ext/)
-
 proc saveChapterIntoEpub(bookPath, href, content: string): string =
   ## Riscrive il file .epub su disco sostituendo il contenuto della voce
   ## `href` con `content`. Restituisce "" in caso di successo, altrimenti
@@ -278,7 +397,183 @@ proc saveChapterIntoEpub(bookPath, href, content: string): string =
     moveFile(tmp, full)                       # sostituzione atomica su disco
   except CatchableError as e:
     return "Errore durante la scrittura: " & e.msg
+  # write-through per gli epub esterni (staging -> originale)
+  let xi = extIndexFromKey(bookPath)
+  if xi >= 0: writeThroughExt(xi)
   return ""
+
+# ------------------------------------------------------------------
+# Note evidenziazioni (*.note.jsonl, come /api/*note* in app.py)
+# ------------------------------------------------------------------
+proc noteFileForBook(book: string): string =
+  ## Path del file *.note.jsonl a fianco dell'epub/cartella ("" se non valido).
+  if not validBookKey(book): return ""
+  let clean = book.strip(chars = {'/'})
+  if clean == FOLDER_BOOK_KEY:
+    if gFolderDir.len == 0: return ""
+    return gFolderDir.strip(chars = {DirSep}) & ".note.jsonl"
+  let xi = extIndexFromKey(book)
+  if xi >= 0:
+    if xi >= gExtEpubs.len: return ""
+    return gExtEpubs[xi] & ".note.jsonl"
+  return gBooksDir / book & ".note.jsonl"
+
+proc readNoteLines(path: string): seq[string] =
+  result = @[]
+  try:
+    for line in readFile(path).splitLines():
+      let s = line.strip()
+      if s.len == 0: continue
+      try:
+        discard parseJson(s)
+        result.add(s)
+      except CatchableError:
+        discard
+  except CatchableError:
+    discard
+
+proc atomicWriteLines(path: string, lines: seq[string]): string =
+  ## Scrittura atomica (.tmp + move). Ritorna "" se ok, altrimenti l'errore.
+  let tmp = path & ".tmp"
+  try:
+    createDir(parentDir(absolutePath(path)))
+    writeFile(tmp, lines.mapIt(it & "\n").join(""))
+    moveFile(tmp, path)
+  except CatchableError as e:
+    try:
+      if fileExists(tmp): removeFile(tmp)
+    except CatchableError:
+      discard
+    return "Errore durante la scrittura: " & e.msg
+  return ""
+
+# ------------------------------------------------------------------
+# CSS del pacchetto (come /api/css_files + /api/css_content in app.py)
+# ------------------------------------------------------------------
+proc cssZipEntries(epubPath: string): seq[tuple[name: string, size: int]] =
+  ## Voci .css di un .epub (bundle.css escluso). Ritorna @[] se illeggibile.
+  result = @[]
+  if not fileExists(epubPath): return
+  var reader: ZipArchiveReader
+  try:
+    reader = openZipArchive(epubPath)
+  except CatchableError:
+    return
+  try:
+    for name in reader.walkFiles():
+      if name.toLowerAscii().endsWith(".css") and
+         extractFilename(name).toLowerAscii() != "bundle.css":
+        var sz = 0
+        try:
+          sz = reader.extractFile(name).len
+        except CatchableError:
+          discard
+        result.add((name: name, size: sz))
+  except CatchableError:
+    discard
+  finally:
+    try:
+      reader.close()
+    except CatchableError:
+      discard
+
+proc cssFilesForBook(book: string): JsonNode =
+  ## {"ok":..,"files":[{href,size}]} oppure {"ok":false,"error":..}.
+  if not validBookKey(book):
+    return %*{"ok": false, "error": "Nome libro non valido"}
+  let clean = book.strip(chars = {'/'})
+  if clean == FOLDER_BOOK_KEY:
+    if gFolderDir.len == 0 or not dirExists(gFolderDir):
+      return %*{"ok": false, "error": "Cartella esterna non configurata"}
+    var files: seq[JsonNode] = @[]
+    for p in walkDirRec(gFolderDir):
+      if not fileExists(p): continue
+      if not p.toLowerAscii().endsWith(".css"): continue
+      let rel = relativePath(p, gFolderDir).replace('\\', '/')
+      if extractFilename(rel).toLowerAscii() == "bundle.css": continue
+      var sz = 0
+      try:
+        sz = getFileSize(p).int
+      except CatchableError:
+        discard
+      files.add(%*{"href": rel, "size": sz})
+    files.sort(proc(a, b: JsonNode): int = cmp(a["href"].getStr, b["href"].getStr))
+    return %*{"ok": true, "files": files}
+  var epubPath: string
+  let xi = extIndexFromKey(book)
+  if xi >= 0:
+    if xi >= gExtEpubs.len: return %*{"ok": false, "error": "Epub esterno non valido"}
+    epubPath = gBooksDir / stagedExtName(xi)
+    if not fileExists(epubPath): epubPath = gExtEpubs[xi]
+  else:
+    epubPath = gBooksDir / book
+  var files: seq[JsonNode] = @[]
+  for e in cssZipEntries(epubPath):
+    files.add(%*{"href": e.name, "size": e.size})
+  files.sort(proc(a, b: JsonNode): int = cmp(a["href"].getStr, b["href"].getStr))
+  return %*{"ok": true, "files": files}
+
+proc cssContentForBook(book, href: string): JsonNode =
+  ## {"ok":true,"href":..,"content":..} oppure {"ok":false,"error":..}.
+  if not validBookKey(book):
+    return %*{"ok": false, "error": "Nome libro non valido"}
+  let h = href.replace('\\', '/').strip(chars = {'/'})
+  if h.len == 0 or ".." in h.split('/') or not h.toLowerAscii().endsWith(".css"):
+    return %*{"ok": false, "error": "Href non valido: " & href}
+  let clean = book.strip(chars = {'/'})
+  if clean == FOLDER_BOOK_KEY:
+    if gFolderDir.len == 0 or not dirExists(gFolderDir):
+      return %*{"ok": false, "error": "Cartella esterna non configurata"}
+    let target = resolveInDir(gFolderDir, h)
+    if target.len == 0:
+      return %*{"ok": false, "error": "File non trovato: " & h}
+    try:
+      return %*{"ok": true, "href": h, "content": readFile(target)}
+    except CatchableError as e:
+      return %*{"ok": false, "error": e.msg}
+  var epubPath: string
+  let xi = extIndexFromKey(book)
+  if xi >= 0:
+    if xi >= gExtEpubs.len: return %*{"ok": false, "error": "Epub esterno non valido"}
+    epubPath = gBooksDir / stagedExtName(xi)
+    if not fileExists(epubPath): epubPath = gExtEpubs[xi]
+  else:
+    epubPath = gBooksDir / book
+  if not fileExists(epubPath):
+    return %*{"ok": false, "error": "File non trovato: " & book}
+  var reader: ZipArchiveReader
+  try:
+    reader = openZipArchive(epubPath)
+  except CatchableError as e:
+    return %*{"ok": false, "error": "Impossibile aprire l'epub: " & e.msg}
+  try:
+    var hit = ""
+    for name in reader.walkFiles():
+      if name.toLowerAscii() == h.toLowerAscii():
+        hit = name
+        break
+    if hit.len == 0:
+      return %*{"ok": false, "error": "File non trovato: " & h}
+    return %*{"ok": true, "href": hit, "content": reader.extractFile(hit)}
+  except CatchableError as e:
+    return %*{"ok": false, "error": e.msg}
+  finally:
+    try:
+      reader.close()
+    except CatchableError:
+      discard
+
+proc cssBundleForBook(book: string): JsonNode =
+  ## Bundle concatenato di tutti i .css (per il rewrite lato frontend JS).
+  let filesRes = cssFilesForBook(book)
+  if not filesRes["ok"].getBool():
+    return filesRes
+  var parts: seq[string] = @[]
+  for f in filesRes["files"]:
+    let c = cssContentForBook(book, f["href"].getStr)
+    if c.hasKey("content"):
+      parts.add(c["content"].getStr)
+  return %*{"ok": true, "content": "@charset \"UTF-8\";\n" & parts.join("\n")}
 
 # ------------------------------------------------------------------
 # Posizione di lettura per libro (~/.epubreader/positions.json)
@@ -331,21 +626,6 @@ proc savePositionToFile(book, cfi, href, anchor: string): string =
     return "Errore durante la scrittura: " & e.msg
   return ""
 
-proc validBookKey(book: string): bool =
-  ## True se `book` è una chiave libro valida (stessa regola di
-  ## _valid_book_key in app.py): "ext", "extepub:N" o basename .epub.
-  if book.len == 0: return false
-  if book.strip(chars = {'/'}) == FOLDER_BOOK_KEY: return true
-  # extepub:N
-  if book.startsWith("extepub:") and book.len > "extepub:".len:
-    if book["extepub:".len .. ^1].allCharsInSet(Digits): return true
-  # basename .epub (niente path, niente traversal)
-  if book == extractFilename(book) and "/" notin book and
-     "\\" notin book and ".." notin book and
-     book.toLowerAscii().endsWith(".epub"):
-    return true
-  return false
-
 # ------------------------------------------------------------------
 # Bridge JS <-> Nim
 # ------------------------------------------------------------------
@@ -360,7 +640,14 @@ proc handleBridge(w: Webview; arg: cstring) =
     let msg = parseJson($arg)
     let scope = msg["scope"].getStr()
     let name  = msg["name"].getStr()
-    let cbId  = if msg.hasKey("callbackId"): $msg["callbackId"].getInt() else: ""
+    # callbackId robusto: numero (frontend storico) o stringa
+    var cbId = ""
+    if msg.hasKey("callbackId"):
+      let c = msg["callbackId"]
+      case c.kind
+      of JInt: cbId = $c.getInt()
+      of JString: cbId = c.getStr()
+      else: discard
 
     if scope != "epub" or cbId.len == 0: return
 
@@ -375,7 +662,7 @@ proc handleBridge(w: Webview; arg: cstring) =
       let js = "window._nimCallbacks[" & cbId & "](" & $data & ")"
       w.eval(js)
     of "saveChapter":
-      let bookPath = args["book"].getStr()
+      var bookPath = args["book"].getStr()
       let href     = args["href"].getStr()
       let content  = args["content"].getStr()
       # "silent" (opzionale, usato dal popover in-context) è accettato per
@@ -383,6 +670,10 @@ proc handleBridge(w: Webview; arg: cstring) =
       # come in app.py, il ri-render del viewer è sempre client-side
       # (updateChapterDom nel frontend), quindi niente MessageBox.
       discard args.hasKey("silent") and args["silent"].getBool()
+      # normalizza chiavi epub esterni ("extepub:N" -> staging __extN__.epub)
+      let nxi = extIndexFromKey(bookPath)
+      if nxi >= 0 and bookPath.startsWith("extepub:"):
+        bookPath = stagedExtName(nxi)
       let err =
         if bookPath.strip(chars = {'/'}) == FOLDER_BOOK_KEY or
            bookPath == "https://" & FOLDER_HOST & "/":
@@ -393,6 +684,131 @@ proc handleBridge(w: Webview; arg: cstring) =
       let res = %*{"ok": err.len == 0, "error": err}
       let js = "window._nimCallbacks[" & cbId & "](" & $res & ")"
       w.eval(js)
+    of "saveCss":
+      # Salvataggio dall'editor CSS (stesso canale di saveChapter: il frontend
+      # Python salva i css con /api/save_chapter, qui riusiamo la stessa via).
+      var bookPath = args["book"].getStr()
+      let href     = args["href"].getStr()
+      let content  = args["content"].getStr()
+      let nxi2 = extIndexFromKey(bookPath)
+      if nxi2 >= 0 and bookPath.startsWith("extepub:"):
+        bookPath = stagedExtName(nxi2)
+      let err2 =
+        if bookPath.strip(chars = {'/'}) == FOLDER_BOOK_KEY:
+          saveChapterIntoFolder(gFolderDir, href, content)
+        else:
+          saveChapterIntoEpub(bookPath, href, content)
+      invokeCallback(w, cbId, %*{"ok": err2.len == 0, "error": err2})
+    of "getConfig":
+      invokeCallback(w, cbId, %*{"ok": true, "book_dir": gFolderDir})
+    of "cssFiles":
+      invokeCallback(w, cbId, cssFilesForBook(args["book"].getStr()))
+    of "cssContent":
+      invokeCallback(w, cbId, cssContentForBook(args["book"].getStr(), args["href"].getStr()))
+    of "cssBundle":
+      invokeCallback(w, cbId, cssBundleForBook(args["book"].getStr()))
+    of "spellcheck", "spellAccept":
+      # Spellcheck disabilitato in desktop (decisione): stub graceful, il
+      # frontend mostra "non disponibile" invece di rompersi.
+      invokeCallback(w, cbId, %*{"ok": false, "disabled": true,
+        "error": "Controllo ortografico non disponibile nella versione desktop"})
+    of "saveNote":
+      let book = args["book"].getStr()
+      let cfi = args["cfi"].getStr()[0 ..< min(2000, args["cfi"].getStr().len)]
+      let href = args["href"].getStr()[0 ..< min(500, args["href"].getStr().len)]
+      let text = args["text"].getStr()[0 ..< min(2000, args["text"].getStr().len)]
+      if cfi.len == 0:
+        invokeCallback(w, cbId, %*{"ok": false, "error": "CFI mancante"})
+      else:
+        let path = noteFileForBook(book)
+        if path.len == 0:
+          invokeCallback(w, cbId, %*{"ok": false, "error": "Nome libro non valido: " & book})
+        else:
+          let entry = %*{"ts": now().format("yyyy-MM-dd'T'HH:mm:ss"),
+            "book": book, "href": href, "cfi": cfi, "text": text}
+          try:
+            createDir(parentDir(absolutePath(path)))
+            var fh: File
+            if open(fh, path, fmAppend):
+              fh.writeLine($entry)
+              fh.close()
+            invokeCallback(w, cbId, %*{"ok": true})
+          except CatchableError as e:
+            invokeCallback(w, cbId, %*{"ok": false, "error": "Errore durante la scrittura: " & e.msg})
+    of "getNotes":
+      let book = args["book"].getStr()
+      let path = noteFileForBook(book)
+      if path.len == 0:
+        invokeCallback(w, cbId, %*{"ok": false, "error": "Nome libro non valido"})
+      else:
+        var notes: seq[JsonNode] = @[]
+        for s in readNoteLines(path):
+          try:
+            notes.add(parseJson(s))
+          except CatchableError:
+            discard
+        invokeCallback(w, cbId, %*{"ok": true, "notes": notes})
+    of "deleteNote":
+      let book = args["book"].getStr()
+      var cfis: seq[string] = @[]
+      if args.hasKey("cfis") and args["cfis"].kind == JArray:
+        for c in args["cfis"]: cfis.add(c.getStr())
+      elif args.hasKey("cfi"):
+        cfis.add(args["cfi"].getStr())
+      if cfis.len == 0:
+        invokeCallback(w, cbId, %*{"ok": false, "error": "Nessun CFI indicato"})
+      else:
+        let path = noteFileForBook(book)
+        if path.len == 0:
+          invokeCallback(w, cbId, %*{"ok": false, "error": "Nome libro non valido: " & book})
+        elif not fileExists(path):
+          invokeCallback(w, cbId, %*{"ok": true, "removed": 0})
+        else:
+          let before = readNoteLines(path)
+          var kept: seq[string] = @[]
+          for s in before:
+            try:
+              if parseJson(s)["cfi"].getStr() notin cfis: kept.add(s)
+            except CatchableError:
+              discard
+          let werr = atomicWriteLines(path, kept)
+          invokeCallback(w, cbId, %*{"ok": werr.len == 0, "error": werr,
+            "removed": before.len - kept.len})
+    of "upsertNote":
+      let book = args["book"].getStr()
+      let cfi = args["cfi"].getStr()[0 ..< min(2000, args["cfi"].getStr().len)]
+      let href = args["href"].getStr()[0 ..< min(500, args["href"].getStr().len)]
+      let text = args["text"].getStr()[0 ..< min(2000, args["text"].getStr().len)]
+      let nbody = if args.hasKey("body"): args["body"].getStr()[0 ..< min(10000, args["body"].getStr().len)] else: ""
+      if cfi.len == 0:
+        invokeCallback(w, cbId, %*{"ok": false, "error": "CFI mancante"})
+      else:
+        let path = noteFileForBook(book)
+        if path.len == 0:
+          invokeCallback(w, cbId, %*{"ok": false, "error": "Nome libro non valido: " & book})
+        else:
+          var lines = if fileExists(path): readNoteLines(path) else: @[]
+          var found = false
+          for i, s in lines:
+            try:
+              var obj = parseJson(s)
+              if obj["cfi"].getStr() == cfi and obj.getOrDefault("kind").getStr() == "note":
+                obj["body"] = %nbody
+                obj["updated"] = %now().format("yyyy-MM-dd'T'HH:mm:ss")
+                if text.len > 0 and obj.getOrDefault("text").getStr().len == 0:
+                  obj["text"] = %text
+                if href.len > 0 and obj.getOrDefault("href").getStr().len == 0:
+                  obj["href"] = %href
+                lines[i] = $obj
+                found = true
+            except CatchableError:
+              discard
+          if not found:
+            lines.add($(%*{"ts": now().format("yyyy-MM-dd'T'HH:mm:ss"),
+              "book": book, "href": href, "cfi": cfi, "text": text,
+              "kind": "note", "body": nbody}))
+          let werr = atomicWriteLines(path, lines)
+          invokeCallback(w, cbId, %*{"ok": werr.len == 0, "error": werr, "updated": found})
     of "getPosition":
       # Ritorna la posizione salvata per un libro: {ok, position} con position
       # = {cfi, href, anchor, updated} oppure null se assente (app.py: get_position).
@@ -458,14 +874,34 @@ when isMainModule:
   gFrontendDir = exeDir / "html_code"
   gBooksDir = exeDir / "epubs"
 
+  # Configurazione utente ~/.epubreader/config.ini (come app.py): book_dir +
+  # epub_files. Il default resta la cartella del translator.
+  let cfg = loadUserConfig()
+  gFolderDir = cfg.bookDir
+  gExtEpubs = cfg.epubFiles.filterIt(fileExists(it))
+  if cfg.epubFiles.len != gExtEpubs.len:
+    echo "[epub] AVVISO: alcuni epub esterni in config.ini non esistono, ignorati"
+
   # Epub NON impacchettato (output del translator): se la cartella esiste la
   # mappiamo su https://ext/ (in app.py: --book-dir).
-  gFolderDir = FOLDER_BOOK_DIR
-  if dirExists(gFolderDir):
+  if gFolderDir.len > 0 and dirExists(gFolderDir):
     echo "[epub] Epub da cartella: ", gFolderDir, "  (su https://", FOLDER_HOST, "/)"
   else:
-    echo "[epub] AVVISO: cartella esterna non trovata, ignorata: ", gFolderDir
+    if gFolderDir.len > 0:
+      echo "[epub] AVVISO: cartella esterna non trovata, ignorata: ", gFolderDir
     gFolderDir = ""
+
+  # Staging degli epub esterni in epubs/__extN__.epub (servibili via https://books/)
+  if not dirExists(gBooksDir):
+    try:
+      createDir(gBooksDir)
+    except CatchableError:
+      discard
+  stageExtEpubs()
+  if gExtEpubs.len > 0:
+    echo "[epub] Epub esterni (", gExtEpubs.len, "):"
+    for p in gExtEpubs:
+      echo "[epub]   - ", p
 
   echo "[epub] Cartella libri: ", gBooksDir
   let books = listEpubBooks(gBooksDir, gFolderDir)
