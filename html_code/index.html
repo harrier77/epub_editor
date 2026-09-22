@@ -1640,13 +1640,71 @@
       };
     }
 
-    // Rilevamento mobile: touch + schermo stretto = dispositivo mobile/tablet.
-    // Usato all'avvio per applicare automaticamente vista a pagina singola e zoom 200%.
+    // Classificazione dispositivo a 3 classi: "phone" | "tablet" | "desktop".
+    // Combina 3 segnali indipendenti a maggioranza:
+    //  1. Client Hints (navigator.userAgentData.mobile) o fallback UA-string;
+    //  2. diagonale CSS dello schermo fisico (screen.* / devicePixelRatio);
+    //  3. touch primario + viewport stretto (vecchia euristica isMobileDevice).
+    // Ritorna { kind, confidence, votes } per debug in console.
+    function detectDeviceKind() {
+      var votes = { phone: 0, tablet: 0, desktop: 0 };
+      // --- Segnale 1: Client Hints / User-Agent ---
+      try {
+        if (navigator.userAgentData && typeof navigator.userAgentData.mobile === "boolean") {
+          if (navigator.userAgentData.mobile) votes.phone += 2;
+          else votes.desktop += 2;
+        } else {
+          var ua = navigator.userAgent || "";
+          if (/android.*mobile|iphone|ipod|windows phone/i.test(ua)) votes.phone += 2;
+          else if (/ipad|android(?!.*mobile)|tablet/i.test(ua)) votes.tablet += 2;
+          else votes.desktop += 1; // UA desktop o ignoto: voto debole
+        }
+      } catch (e) {}
+      // --- Segnale 2: diagonale CSS dello schermo fisico ---
+      try {
+        var w = (window.screen && screen.width) || window.innerWidth || 0;
+        var h = (window.screen && screen.height) || window.innerHeight || 0;
+        var diag = Math.sqrt(w * w + h * h);
+        var shortest = Math.min(w, h);
+        if (diag > 0) {
+          if (shortest < 500 && diag < 1000) votes.phone += 1;
+          else if (shortest < 800 && diag < 1400) votes.tablet += 1;
+          else votes.desktop += 1;
+        }
+      } catch (e) {}
+      // --- Segnale 3: touch + viewport (vecchia euristica) ---
+      try {
+        var hasTouch = navigator.maxTouchPoints > 0;
+        var coarse = window.matchMedia("(pointer: coarse)").matches;
+        var narrow = window.matchMedia("(max-width: 1024px)").matches;
+        var smallH = window.matchMedia("(max-height: 600px)").matches;
+        if (hasTouch && (narrow || smallH)) {
+          // viewport molto stretto = telefono; touch su viewport medio = tablet
+          if (window.matchMedia("(max-width: 600px)").matches) votes.phone += 1;
+          else votes.tablet += 1;
+        } else if (!hasTouch && !coarse) {
+          votes.desktop += 1;
+        }
+      } catch (e) {}
+      var kind = "desktop", best = -1;
+      ["phone", "tablet", "desktop"].forEach(function (k) {
+        if (votes[k] > best) { best = votes[k]; kind = k; }
+      });
+      // Pareggio phone/tablet con touch ma senza Client Hints: tablet vince
+      // (un telefono dichiara quasi sempre mobile:true o UA mobile).
+      if (votes.phone === votes.tablet && votes.phone > 0 && kind === "phone") {
+        try {
+          var noHint = !(navigator.userAgentData && typeof navigator.userAgentData.mobile === "boolean");
+          if (noHint) kind = "tablet";
+        } catch (e) {}
+      }
+      return { kind: kind, confidence: best, votes: votes };
+    }
+
+    // Compat: vecchia API booleana (phone o tablet = mobile).
     function isMobileDevice() {
-      var hasTouch = navigator.maxTouchPoints > 0;
-      var narrowScreen = window.matchMedia("(max-width: 1024px)").matches;
-      var smallScreen = window.matchMedia("(max-height: 600px)").matches;
-      return hasTouch && (narrowScreen || smallScreen);
+      try { return detectDeviceKind().kind !== "desktop"; }
+      catch (e) { return false; }
     }
 
     // ======================================================================
@@ -1854,13 +1912,24 @@
         }
         highlightCurrentBook();
 
-        // Configurazione automatica per dispositivi mobile:
-        // singola pagina per una lettura comoda su schermi piccoli.
-        if (isMobileDevice()) {
+        // Configurazione automatica per classe di dispositivo:
+        // phone/tablet = pagina singola (solo phone forza zoom 100%);
+        // desktop/monitor esterno = doppia pagina + zoom 150%.
+        var deviceKind = "desktop";
+        try { deviceKind = detectDeviceKind().kind; } catch (e) {}
+        try { console.info("[device]", JSON.stringify(detectDeviceKind())); } catch (e) {}
+        if (deviceKind !== "desktop") {
           spreadOn = false;
           rendition.spread("none");
           document.getElementById("spreadToggle").textContent = "📖";
-          applyZoom(1);
+          if (deviceKind === "phone") applyZoom(1);
+        } else {
+          applyZoom(1.5);
+          // Default desktop: sfondo giallo. Solo se l'utente non ha ancora
+          // scelto (bgThemeName === null): setBgTheme("bgYellow") non trigghera
+          // il toggle-off in questo caso; dal secondo click su G si torna al
+          // bianco (toggle invertito rispetto a prima).
+          try { if (bgThemeName === null) setBgTheme("bgYellow"); } catch (e) {}
         }
       }).catch(function (err) {
         // Errore durante il rendering iniziale (es. CFI non valido)
@@ -1979,7 +2048,20 @@
     // element itself, so column pagination remains correct.
     // #viewer has overflow:auto, so zoomed content that exceeds the box
     // can be scrolled.
-    var readerZoom = 1, ZOOM_MIN = 0.75, ZOOM_MAX = 2, ZOOM_STEP = 0.25;
+    var readerZoom = 1, ZOOM_MIN = 0.75, ZOOM_MAX = 2;
+    // Livelli di zoom fissi: A+/A- ciclano tra questi valori (inclusi 110%, 115%, 120%).
+    var ZOOM_LEVELS = [0.75, 0.80, 0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15, 1.20, 1.25, 1.30, 1.40, 1.50, 1.60, 1.75, 1.80, 1.90, 2.00];
+    function zoomIndex(z) {
+      for (var i = 0; i < ZOOM_LEVELS.length; i++) {
+        if (Math.abs(ZOOM_LEVELS[i] - z) < 0.005) return i;
+      }
+      return -1;
+    }
+    function applyZoomLevelIndex(idx) {
+      if (idx < 0) idx = 0;
+      if (idx >= ZOOM_LEVELS.length) idx = ZOOM_LEVELS.length - 1;
+      applyZoom(ZOOM_LEVELS[idx]);
+    }
     // ======================================================================
     // ZOOM HANDLER (FIX: search highlights break CFI-based navigation)
     // ======================================================================
@@ -2037,9 +2119,17 @@
         }
       });
     }
-    document.getElementById("zoomOut").addEventListener("click", function () { applyZoom(readerZoom - ZOOM_STEP); });
-    document.getElementById("zoomReset").addEventListener("click", function () { applyZoom(1); });
-    document.getElementById("zoomIn").addEventListener("click", function () { applyZoom(readerZoom + ZOOM_STEP); });
+    document.getElementById("zoomOut").addEventListener("click", function () {
+      var idx = zoomIndex(readerZoom);
+      if (idx > 0) applyZoomLevelIndex(idx - 1);
+    });
+    document.getElementById("zoomReset").addEventListener("click", function () {
+      applyZoom(1);
+    });
+    document.getElementById("zoomIn").addEventListener("click", function () {
+      var idx = zoomIndex(readerZoom);
+      if (idx < ZOOM_LEVELS.length - 1) applyZoomLevelIndex(idx + 1);
+    });
 
     // --- Tema di lettura: sfondo del testo (giallo pallido / nero con testo bianco) ---
     var bgThemes = {
@@ -2049,7 +2139,9 @@
                "body * { color: #fff !important; } " +
                "a { color: #9ecbff !important; }"
     };
-    var bgThemeName = null; // "bgYellow" | "bgBlack" | null = nessun tema
+    var bgThemeName = null; // "bgYellow" | "bgBlack" | null = sfondo bianco (default)
+                              // Su desktop il default diventa "bgYellow" (vedi openBook):
+                              // il toggle su G torna quindi al bianco.
     // Colore di sfondo del container nella pagina madre: il div .epub-container
     // ha un padding attorno all'area di lettura, che senza questo colore
     // mostrava una cornice bianca attorno al tema scelto.
@@ -2123,6 +2215,9 @@
       for (var i = 0; i < containers.length; i++) {
         containers[i].style.backgroundColor = color;
       }
+      // Anche #viewer (default #fafafa da CSS) va tinta: altrimenti resta
+      // una cornice bianca attorno al container quando il tema e' attivo.
+      try { viewer.style.backgroundColor = color; } catch (e) {}
     }
 
     function setBgTheme(name) {
