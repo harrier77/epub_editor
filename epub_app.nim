@@ -26,8 +26,9 @@
 import
   miowv,
   winim,
-  std/[json, os, strutils, times, xmlparser, xmltree, algorithm, tables, sequtils],
-  zippy/ziparchives
+  std/[json, os, osproc, strutils, times, xmlparser, xmltree, algorithm, tables, sequtils],
+  zippy/ziparchives,
+  sync
 
 # ------------------------------------------------------------------
 # Costante: nome del virtual host e cartella con il frontend
@@ -52,11 +53,8 @@ proc configFilePath(): string =
   result = getHomeDir() / ".epubreader" / "config.ini"
 
 proc expandUser(p: string): string =
-  ## Espande "~" iniziale alla home (come os.path.expanduser).
-  if p.startsWith("~"):
-    result = getHomeDir() & p[1 .. ^1]
-  else:
-    result = p
+  ## Come os.path.expanduser: usa std/os.expandTilde ("~" e "~/..." -> home).
+  result = expandTilde(p)
 
 proc loadUserConfig(): tuple[bookDir: string, epubFiles: seq[string]] =
   ## Legge [paths] book_dir + epub_files (lista separata da virgole).
@@ -627,6 +625,109 @@ proc savePositionToFile(book, cfi, href, anchor: string): string =
   return ""
 
 # ------------------------------------------------------------------
+# Sincronizzazione Dropbox (come /api/dropbox/* in app.py).
+# epub_app NON linka il sync nel proprio thread (Nim vieta memoria GC
+# condivisa tra thread): lancia sync.exe come sottoprocesso in background
+# con --log/--result-file, e il frontend fa poll via dropboxStatus.
+# Stessa finestrella di feedback (log + stato) della webui Flask.
+# ------------------------------------------------------------------
+var dbxHandle: HANDLE = 0  # processo sync.exe (0 = nessuno)
+var dbxRunning = false
+var dbxMode = ""
+var dbxDry = false
+var dbxLogFile = ""
+var dbxResultFile = ""
+var dbxResult: JsonNode = newJNull()
+# Override da ~/.epubreader/config.ini [dropbox] (come app.py):
+# sync_dir vuoto -> sync.exe risolve da ~/.mydrpbx/config.json working-folder.
+var gSyncDirOverride = ""
+var gRemoteDir = "/"
+
+proc loadDropboxConfig() =
+  ## Legge [dropbox] sync_dir/remote_dir come _load_config() in app.py.
+  let cfg = configFilePath()
+  if not fileExists(cfg): return
+  try:
+    var inDbx = false
+    for rawLine in readFile(cfg).splitLines():
+      let line = rawLine.strip()
+      if line.startsWith("["):
+        inDbx = line.toLowerAscii() == "[dropbox]"
+      elif inDbx and "=" in line:
+        let parts = line.split("=", maxsplit = 1)
+        let k = parts[0].strip().toLowerAscii()
+        let v = parts[1].strip()
+        if k == "sync_dir" and v.len > 0:
+          gSyncDirOverride = expandUser(v)
+        elif k == "remote_dir" and v.len > 0:
+          gRemoteDir = v
+  except CatchableError:
+    discard
+
+proc dbxLocalDir(): string =
+  ## Cartella locale effettiva: override config o stessa di sync.py.
+  if gSyncDirOverride.len > 0: absolutePath(gSyncDirOverride)
+  else: sync.resolveLocalDir()
+
+proc dbxFiles(): tuple[log, res: string] =
+  (getTempDir() / "dbx_sync.log", getTempDir() / "dbx_sync.json")
+
+proc dbxReadLog(): seq[string] =
+  result = @[]
+  if dbxLogFile.len > 0 and fileExists(dbxLogFile):
+    try:
+      for line in readFile(dbxLogFile).splitLines():
+        if line.strip().len > 0: result.add(line)
+    except CatchableError:
+      discard
+
+proc dbxLaunch(exe: string, args: seq[string]): HANDLE =
+  ## Avvia sync.exe con console MINIMIZZATA senza rubare il focus
+  ## (SW_SHOWMINNOACTIVE): resta nella taskbar, la si apre solo se serve
+  ## (es. blocco da ispezionare). Niente finestra vuota in primo piano.
+  var si: STARTUPINFOW
+  var pi: PROCESS_INFORMATION
+  zeroMem(addr si, sizeof(si))
+  si.cb = DWORD(sizeof(si))
+  si.dwFlags = STARTF_USESHOWWINDOW
+  si.wShowWindow = SW_SHOWMINNOACTIVE
+  let cmd = newWideCString(quoteShellCommand(@[exe] & args))
+  if CreateProcessW(nil, cmd, nil, nil, FALSE, 0, nil, nil, addr si, addr pi) == 0:
+    raise newException(OSError, "Avvio sync.exe fallito (codice " & $GetLastError() & ")")
+  CloseHandle(pi.hThread)
+  result = pi.hProcess
+
+proc dbxPoll() =
+  ## Se il sottoprocesso e' terminato, raccoglie l'esito (una sola volta).
+  if not dbxRunning or dbxHandle == 0: return
+  var code: DWORD = 0
+  if GetExitCodeProcess(dbxHandle, addr code) == 0 or code != DWORD(STILL_ACTIVE):
+    CloseHandle(dbxHandle)
+    dbxHandle = 0
+    dbxRunning = false
+  else:
+    return  # ancora in esecuzione
+  if dbxResultFile.len > 0 and fileExists(dbxResultFile):
+    try:
+      let r = parseJson(readFile(dbxResultFile))
+      if r.hasKey("ok") and not r.hasKey("downloaded"):
+        dbxResult = r  # errore scritto da sync ({ok:false, error})
+      else:
+        dbxResult = %*{"ok": true, "result": r}
+    except CatchableError as e:
+      dbxResult = %*{"ok": code == 0, "error": "log nel pannello (exit " & $code & "): " & e.msg}
+  elif code != 0:
+    dbxResult = %*{"ok": false, "error": "sync.exe terminato con codice " & $code}
+  else:
+    dbxResult = %*{"ok": true}
+
+proc dbxSnapshot(): JsonNode =
+  dbxPoll()
+  result = %*{"ok": true, "running": dbxRunning, "mode": dbxMode,
+    "dry": dbxDry, "log": dbxReadLog(), "result": dbxResult,
+    "sync_dir": dbxLocalDir()}
+
+# ------------------------------------------------------------------
 # Bridge JS <-> Nim
 # ------------------------------------------------------------------
 proc invokeCallback(w: Webview; cbId: string; payload: JsonNode) =
@@ -707,6 +808,50 @@ proc handleBridge(w: Webview; arg: cstring) =
       invokeCallback(w, cbId, cssContentForBook(args["book"].getStr(), args["href"].getStr()))
     of "cssBundle":
       invokeCallback(w, cbId, cssBundleForBook(args["book"].getStr()))
+    of "dropboxStart":
+      # Come POST /api/dropbox/sync in app.py: lancia sync.exe, rifiuta se busy.
+      dbxPoll()
+      var mode = if args.hasKey("mode"): args["mode"].getStr() else: "both"
+      if mode notin ["push", "pull", "both"]:
+        invokeCallback(w, cbId, %*{"ok": false, "error": "Modalita' non valida: " & mode})
+      elif dbxRunning:
+        invokeCallback(w, cbId, %*{"ok": false, "error": "Una sincronizzazione e' gia' in corso"})
+      else:
+        let dry = if args.hasKey("dry"): args["dry"].getBool() else: false
+        var exe = getAppDir() / "sync.exe"
+        if not fileExists(exe):
+          exe = getCurrentDir() / "sync.exe"
+        if not fileExists(exe):
+          invokeCallback(w, cbId, %*{"ok": false, "error": "sync.exe non trovato vicino a epub_app.exe"})
+        else:
+          let (lf, rf) = dbxFiles()
+          try:
+            if fileExists(lf): removeFile(lf)
+            if fileExists(rf): removeFile(rf)
+          except CatchableError:
+            discard
+          var pargs = @[mode]
+          if dry: pargs.add("--dry-run")
+          # Stessi path di app.py: override [dropbox] sync_dir/remote_dir,
+          # altrimenti sync.exe risolve da ~/.mydrpbx/config.json (working-folder).
+          if gSyncDirOverride.len > 0:
+            pargs.add("--local-dir:" & gSyncDirOverride)
+          if gRemoteDir.len > 0:
+            pargs.add("--remote-dir:" & gRemoteDir)
+          pargs.add("--log:" & lf)
+          pargs.add("--result-file:" & rf)
+          try:
+            dbxHandle = dbxLaunch(exe, pargs)
+            dbxRunning = true; dbxMode = mode; dbxDry = dry
+            dbxLogFile = lf; dbxResultFile = rf
+            dbxResult = newJNull()
+            invokeCallback(w, cbId, %*{"ok": true, "started": true})
+          except CatchableError as e:
+            dbxHandle = 0; dbxRunning = false
+            invokeCallback(w, cbId, %*{"ok": false, "error": e.msg})
+    of "dropboxStatus":
+      # Come GET /api/dropbox/status in app.py (poll dal frontend).
+      invokeCallback(w, cbId, dbxSnapshot())
     of "spellcheck", "spellAccept":
       # Spellcheck disabilitato in desktop (decisione): stub graceful, il
       # frontend mostra "non disponibile" invece di rompersi.
@@ -877,6 +1022,8 @@ when isMainModule:
   # Configurazione utente ~/.epubreader/config.ini (come app.py): book_dir +
   # epub_files. Il default resta la cartella del translator.
   let cfg = loadUserConfig()
+  loadDropboxConfig()  # [dropbox] sync_dir/remote_dir, come app.py
+  echo "[dbx] locale: ", dbxLocalDir(), "  remoto: ", gRemoteDir
   gFolderDir = cfg.bookDir
   gExtEpubs = cfg.epubFiles.filterIt(fileExists(it))
   if cfg.epubFiles.len != gExtEpubs.len:

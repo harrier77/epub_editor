@@ -543,6 +543,37 @@
         linear-gradient(135deg, transparent 50%, #e0e0e0 50%) 24px 24px / 36px 36px no-repeat,
         linear-gradient(135deg, transparent 50%, #a0a0a0 50%) 12px 12px / 36px 36px no-repeat;
     }
+    /* Pannello Dropbox: header trascinabile + grip di ridimensionamento
+       (stessa UX del popover inlineEditor, come reader/static/index.html). */
+    #dbxHead {
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      flex-shrink: 0;
+    }
+    #dbxHead:active { cursor: grabbing; }
+    #dbxGrip {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      width: 44px;
+      height: 44px;
+      cursor: nwse-resize;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      border-bottom-right-radius: 7px;
+      background:
+        linear-gradient(135deg, transparent 50%, #bdbdbd 50%) 22px 22px / 33px 33px no-repeat,
+        linear-gradient(135deg, transparent 50%, #7a7a7a 50%) 11px 11px / 33px 33px no-repeat;
+    }
+    #dbxGrip:hover,
+    #dbxGrip:active {
+      background:
+        linear-gradient(135deg, transparent 50%, #e0e0e0 50%) 22px 22px / 33px 33px no-repeat,
+        linear-gradient(135deg, transparent 50%, #a0a0a0 50%) 11px 11px / 33px 33px no-repeat;
+    }
     /* Frammenti di testo del paragrafo: un campo editabile per nodo testo.
        La struttura HTML (<em>, <strong>, attributi…) non e' esposta: si
        modificano solo i nodi testo, quindi al salvataggio nulla del markup
@@ -945,6 +976,7 @@
     <button id="cssEditBtn" disabled title="Modifica fogli di stile (styles/*.css)">🎨</button>
     <button id="searchToggle" disabled title="Search in current chapter" style="font-size:20px">🔎</button>
     <button id="spellToolbar" disabled title="Controllo ortografico del paragrafo selezionato (come doppio click: apre il paragrafo intero e sottolinea gli errori)">✓</button>
+    <button id="dbxBtn" title="Sincronizza il libro con Dropbox (push/pull)">☁</button>
 
     <select id="widthSelect" title="Larghezza massima pagina">
     <option value="30">30%</option>
@@ -969,6 +1001,28 @@
         <span id="title">Lettore EPUB</span>
         <span id="chapter"></span>
  </div>
+
+  <!-- Pannello sincronizzazione Dropbox (push/pull del libro, come app.py) -->
+  <div id="dbxPanel" aria-hidden="true" style="display:none;position:fixed;top:56px;right:12px;z-index:1090;width:380px;max-width:94vw;background:#262626;border:1px solid #666;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.55);overflow:hidden;font-size:13px;color:#dcdcdc;flex-direction:column">
+    <div id="dbxHead" title="Trascina per spostare" style="padding:8px 12px;background:#2f2f2f;border-bottom:1px solid #555;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-weight:bold">☁ Dropbox</span>
+      <button id="dbxCloseBtn" title="Chiudi" style="background:none;border:none;color:#bbb;font-size:16px;cursor:pointer;line-height:1">✕</button>
+    </div>
+    <div style="padding:10px 12px;flex:1;min-height:0;display:flex;flex-direction:column;overflow:auto">
+      <div id="dbxMode" style="color:#bbb;font-size:12px;margin-bottom:8px"></div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <button id="dbxPushBtn" title="Locale -> remoto" style="flex:1;background:#444;border:1px solid #666;border-radius:4px;color:#fff;padding:6px;cursor:pointer">⬆ Push</button>
+        <button id="dbxPullBtn" title="Remoto -> locale" style="flex:1;background:#444;border:1px solid #666;border-radius:4px;color:#fff;padding:6px;cursor:pointer">⬇ Pull</button>
+        <button id="dbxBothBtn" title="Bidirezionale" style="flex:1;background:#444;border:1px solid #666;border-radius:4px;color:#fff;padding:6px;cursor:pointer">⇄ Both</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#bbb;margin-bottom:6px">
+        <input type="checkbox" id="dbxDry"> Solo anteprima (dry-run)
+      </label>
+      <div id="dbxLog" style="flex:1;min-height:80px;overflow:auto;background:#1e1e1e;border:1px solid #444;border-radius:4px;padding:6px 8px;font-family:Consolas,monospace;font-size:11px;white-space:pre-wrap;color:#9de39d"></div>
+      <div id="dbxStatus" style="margin-top:6px;font-size:12px;min-height:16px;color:#bbb"></div>
+    </div>
+    <div id="dbxGrip" title="Ridimensiona"></div>
+  </div>
 
 <div id="viewer"></div>
 
@@ -1171,9 +1225,17 @@
     }
     // Incapsula un oggetto bridge in una pseudo-Response con .json(),
     // cosi' tutti i call-site esistenti (.then(r => r.json())) funzionano
-    // invariati sia sotto Flask che sotto WebView2.
+    // invariati sia sotto Flask che sotto WebView2. Inoltre esponiamo .ok
+    // (semantica di Response.ok, livello trasporto): senza di esso i call-site
+    // che testano r.ok prima di .json() (es. restoreSavedPosition, get_notes)
+    // fallirebbero sempre sotto WebView2 perche' undefined e' falsy -> il
+    // ripristino dell'ultima pagina aperta non avverrebbe mai.
     function asResp(obj) {
-      return { json: function () { return Promise.resolve(obj); }, _nim: obj };
+      return {
+        ok: obj ? obj.ok !== false : true,
+        json: function () { return Promise.resolve(obj); },
+        _nim: obj
+      };
     }
     function apiFetch(url, opts) {
       if (!IS_NIM) return fetch(url, opts);
@@ -1215,6 +1277,10 @@
         return nimCall("epub", "spellcheck", body).then(asResp);
       if (url.indexOf("/api/config") === 0)
         return nimCall("epub", "getConfig", {}).then(asResp);
+      if (url.indexOf("/api/dropbox/sync") === 0)
+        return nimCall("epub", "dropboxStart", body).then(asResp);
+      if (url.indexOf("/api/dropbox/status") === 0)
+        return nimCall("epub", "dropboxStatus", {}).then(asResp);
       return fetch(url, opts);
     }
     // Converte url Flask ("/ext/", "/libro.epub") in virtual host WebView2
@@ -2283,6 +2349,95 @@
       });
     }
     document.getElementById("reloadBtn").addEventListener("click", reloadCurrentChapter);
+
+    // ==================================================================
+    // Sincronizzazione Dropbox (☁): avvia push/pull e poll dello stato.
+    // Sotto Flask usa /api/dropbox/* via fetch, sotto WebView2 il bridge
+    // Nim (dropboxStart/dropboxStatus) via apiFetch — stesso backend runSync
+    // in thread, stessa finestrella di feedback (log + stato).
+    // ==================================================================
+    var dbxBusy = false;
+    var dbxWasRunning = false;
+    var dbxPollTimer = null;
+    function dbxLogSet(lines) {
+      var el = document.getElementById("dbxLog");
+      if (!el) return;
+      el.textContent = (lines || []).join("\n");
+      el.scrollTop = el.scrollHeight;
+    }
+    function dbxRefresh() {
+      apiFetch("/api/dropbox/status").then(function (r) { return r.json(); })
+        .then(function (d) {
+          var finished = dbxWasRunning && !(d.running || false);
+          dbxWasRunning = !!(d.running || false);
+          dbxBusy = dbxWasRunning;
+          document.getElementById("dbxMode").textContent = dbxBusy
+            ? "Sincronizzazione in corso\u2026 (" + (d.mode || "") + ")"
+            : "Cartella: " + (d.sync_dir || "") +
+              (d.dry ? " \u00b7 modalit\u00e0 anteprima (dry-run)" : "");
+          dbxLogSet(d.log || []);
+          var st = document.getElementById("dbxStatus");
+          if (d.result) {
+            if (d.result.ok && d.result.result) {
+              st.textContent = "\u2713 Fatto: " + d.result.result.downloaded +
+                " scaricati, " + d.result.result.uploaded + " caricati.";
+            } else if (d.result.ok) {
+              st.textContent = "\u2713 Fatto.";
+            } else {
+              st.textContent = "\u2717 " + (d.result.error || "Errore.");
+            }
+          } else if (!dbxBusy) {
+            st.textContent = "";
+          }
+          document.getElementById("dbxPushBtn").disabled = dbxBusy;
+          document.getElementById("dbxPullBtn").disabled = dbxBusy;
+          document.getElementById("dbxBothBtn").disabled = dbxBusy;
+          if (finished) {
+            if (dbxPollTimer) { clearInterval(dbxPollTimer); dbxPollTimer = null; }
+            if (d.result && d.result.ok) {
+              try { loadBookList(); } catch (e) {}
+              if (isFolderBook() && currentHref) { try { reloadCurrentChapter(); } catch (e) {} }
+              setStatus("Sync Dropbox completato \u2713");
+            }
+          }
+        })
+        .catch(function () {});
+    }
+    function dbxToggle() {
+      var p = document.getElementById("dbxPanel");
+      var open = p.style.display !== "none";
+      p.style.display = open ? "none" : "flex";
+      p.setAttribute("aria-hidden", open ? "true" : "false");
+      if (!open) dbxRefresh();
+    }
+    function dbxStart(mode) {
+      var dry = document.getElementById("dbxDry").checked;
+      apiFetch("/api/dropbox/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: mode, dry: dry })
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (!d.ok) {
+          document.getElementById("dbxStatus").textContent = "\u2717 " + (d.error || "Errore.");
+          return;
+        }
+        dbxWasRunning = false;
+        if (dbxPollTimer) clearInterval(dbxPollTimer);
+        dbxPollTimer = setInterval(dbxRefresh, 1000);
+        dbxRefresh();
+      }).catch(function (err) {
+        document.getElementById("dbxStatus").textContent = "\u2717 " + err;
+      });
+    }
+    document.getElementById("dbxBtn").addEventListener("click", dbxToggle);
+    document.getElementById("dbxCloseBtn").addEventListener("click", function () {
+      var p = document.getElementById("dbxPanel");
+      p.style.display = "none";
+      p.setAttribute("aria-hidden", "true");
+    });
+    document.getElementById("dbxPushBtn").addEventListener("click", function () { dbxStart("push"); });
+    document.getElementById("dbxPullBtn").addEventListener("click", function () { dbxStart("pull"); });
+    document.getElementById("dbxBothBtn").addEventListener("click", function () { dbxStart("both"); });
 
     // ==================================================================
     // Editor metadati OPF (solo libri da cartella)
@@ -5632,23 +5787,24 @@
     // Pointer Events + capture: gli eventi continuano ad arrivare anche se il
     // puntatore passa sopra l'iframe del viewer. touch-action: none nel CSS
     // fa sì che su touch il gesto non venga interpretato come scroll/pan.
-    function makePopoverDraggable(handleEl) {
+    function makePopoverDraggable(handleEl, el) {
+      el = el || inlineEditor;
       handleEl.addEventListener("pointerdown", function (e) {
         if (e.target && e.target.closest && e.target.closest("button")) return;
         e.preventDefault();
         var h = this;
         try { h.setPointerCapture(e.pointerId); } catch (err) {}
         var startX = e.clientX, startY = e.clientY;
-        var origLeft = parseFloat(inlineEditor.style.left) || 0;
-        var origTop = parseFloat(inlineEditor.style.top) || 0;
+        var origRect = el.getBoundingClientRect();
+        var origLeft = origRect.left, origTop = origRect.top;
         function onMove(ev) {
           // mantiene il popover sempre almeno in parte visibile
           var nx = origLeft + ev.clientX - startX;
           var ny = origTop + ev.clientY - startY;
-          nx = Math.max(-inlineEditor.offsetWidth + 120, Math.min(nx, window.innerWidth - 120));
+          nx = Math.max(-el.offsetWidth + 120, Math.min(nx, window.innerWidth - 120));
           ny = Math.max(0, Math.min(ny, window.innerHeight - 60));
-          inlineEditor.style.left = nx + "px";
-          inlineEditor.style.top = ny + "px";
+          el.style.left = nx + "px";
+          el.style.top = ny + "px";
         }
         function onUp() {
           h.removeEventListener("pointermove", onMove);
@@ -5676,6 +5832,31 @@
         inlineEditor.style.width =
           Math.min(Math.max(360, origW + ev.clientX - startX), window.innerWidth - 16) + "px";
         inlineEditor.style.height =
+          Math.min(Math.max(240, origH + ev.clientY - startY), window.innerHeight - 16) + "px";
+      }
+      function onUp() {
+        grip.removeEventListener("pointermove", onMove);
+        grip.removeEventListener("pointerup", onUp);
+      }
+      grip.addEventListener("pointermove", onMove);
+      grip.addEventListener("pointerup", onUp);
+    });
+
+    // Pannello Dropbox: trascina dall'header e ridimensiona dal grip
+    // (come reader/static/index.html nella webui Flask).
+    makePopoverDraggable(document.getElementById("dbxHead"), document.getElementById("dbxPanel"));
+    document.getElementById("dbxGrip").addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var grip = this;
+      try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+      var startX = e.clientX, startY = e.clientY;
+      var p = document.getElementById("dbxPanel");
+      var origW = p.offsetWidth, origH = p.offsetHeight;
+      function onMove(ev) {
+        p.style.width =
+          Math.min(Math.max(300, origW + ev.clientX - startX), window.innerWidth - 16) + "px";
+        p.style.height =
           Math.min(Math.max(240, origH + ev.clientY - startY), window.innerHeight - 16) + "px";
       }
       function onUp() {
